@@ -24,7 +24,7 @@ export class Input {
   // --- held buttons
   jump = false; sprint = false; crouch = false; aim = false; fire = false; handbrake = false; horn = false; walk = false;
   // --- edge-triggered (true for one frame)
-  usePressed = false; meleePressed = false; lightsPressed = false; sirenPressed = false; camPressed = false; mapPressed = false; pausePressed = false; chatPressed = false; weaponPressed = false; jumpPressed = false;
+  usePressed = false; meleePressed = false; lightsPressed = false; sirenPressed = false; camPressed = false; mapPressed = false; pausePressed = false; chatPressed = false; weaponPressed = false; jumpPressed = false; assistPressed = false; espPressed = false;
   /** last used device, drives the on-screen prompts */
   device: 'kbm' | 'pad' = 'kbm';
   /** when true the game ignores gameplay input (menus, chat) */
@@ -124,6 +124,7 @@ export class Input {
     let jump = k.has('Space'), sprint = k.has('ShiftLeft') || k.has('ShiftRight'), aim = this.mouseR, fire = this.mouseL, handbrake = k.has('Space'), horn = k.has('KeyH');
     let walk = k.has('AltLeft');
     let use = p.has('KeyE') || p.has('KeyF'), melee = p.has('KeyQ') || (this.mousePressedL && !this.mouseR), lights = p.has('KeyL'), siren = p.has('KeyG'), cam = p.has('KeyV'), map = p.has('KeyM'), pause = p.has('Escape') || p.has('KeyP'), chat = p.has('KeyT') || p.has('Enter'), weapon = p.has('Digit1') || p.has('Digit2') || p.has('KeyX');
+    const assistKey = p.has('KeyY') || p.has('KeyZ') && false, espKey = p.has('KeyU');
     let jumpPressed = p.has('Space');
     if (p.has('KeyC') || p.has('ControlLeft')) this.crouchToggle = !this.crouchToggle;
     this.mousePressedL = false;
@@ -187,7 +188,7 @@ export class Input {
     this.throttle = ui ? 0 : clamp(throttle, -1, 1); this.steer = ui ? 0 : clamp(steer, -1, 1);
     this.jump = !ui && jump; this.sprint = !ui && sprint; this.aim = !ui && aim; this.fire = !ui && fire; this.handbrake = !ui && handbrake; this.horn = !ui && horn; this.walk = !ui && walk;
     this.crouch = !ui && this.crouchToggle;
-    this.usePressed = !ui && use; this.meleePressed = !ui && melee; this.lightsPressed = !ui && lights; this.sirenPressed = !ui && siren; this.camPressed = !ui && cam; this.weaponPressed = !ui && weapon; this.jumpPressed = !ui && jumpPressed;
+    this.usePressed = !ui && use; this.meleePressed = !ui && melee; this.lightsPressed = !ui && lights; this.sirenPressed = !ui && siren; this.camPressed = !ui && cam; this.weaponPressed = !ui && weapon; this.jumpPressed = !ui && jumpPressed; this.assistPressed = !ui && assistKey; this.espPressed = !ui && espKey;
     this.mapPressed = map; this.pausePressed = pause; this.chatPressed = !ui && chat;
     if (this.sprint || this.jump) this.crouchToggle = false;
   }

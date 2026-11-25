@@ -1,7 +1,7 @@
 // Wire protocol: binary input + snapshot packets, JSON for everything else.
 import { CharState, InputCmd, VehState, newChar, newVeh } from '../sim/types';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const SNAPSHOT_HZ = 20;
 
 export const enum Pkt {
@@ -13,22 +13,50 @@ export const enum Pkt {
 export interface Appearance {
   skin: number; // palette index
   hair: number; // hair colour index
-  hairStyle: number;
-  jacket: number; // colour index
+  hairStyle: number; // 0 short, 1 long, 2 bald, 3 full, 4 ponytail, 5 bun, 6 undercut
+  jacket: number; // top colour index
   pants: number;
   shoes: number;
   build: number; // 0 slim .. 2 broad
-  hat: number; // 0 none
+  hat: number; // 0 none, 1 cap, 2 beanie, 3 hat
+  top: number; // 0 jacket, 1 hoodie, 2 t-shirt, 3 suit, 4 puffer
+  legs: number; // 0 jeans, 1 shorts, 2 track pants
+  feet: number; // 0 sneakers, 1 boots, 2 dress shoes
+  acc: number; // 0 none, 1 glasses, 2 sunglasses, 3 backpack, 4 scarf
 }
+/** number of options per appearance field (order = packing order) */
+export const APPEARANCE_RANGES: [keyof Appearance, number][] = [
+  ['skin', 5], ['hair', 6], ['hairStyle', 7], ['jacket', 16], ['pants', 8], ['shoes', 4], ['build', 3], ['hat', 4], ['top', 5], ['legs', 3], ['feet', 3], ['acc', 5],
+];
 export function defaultAppearance(seed = 1): Appearance {
   const r = (n: number, k: number) => Math.abs(Math.imul(seed + k * 7919, 2654435761) >>> 8) % n;
-  return { skin: r(5, 1), hair: r(6, 2), hairStyle: r(4, 3), jacket: r(10, 4), pants: r(6, 5), shoes: r(4, 6), build: r(3, 7), hat: r(5, 8) === 0 ? 1 : 0 };
+  const a = {} as Appearance;
+  APPEARANCE_RANGES.forEach(([k, n], i) => { a[k] = r(n, i + 1); });
+  // most people wear no hat or accessory
+  if (r(3, 20)) a.hat = 0;
+  if (r(3, 21)) a.acc = 0;
+  if (a.hairStyle === 2 && r(2, 22)) a.hairStyle = 0;
+  return a;
+}
+/** Clamp untrusted appearance data to valid indices (missing fields → 0). */
+export function sanitizeAppearance(src: unknown): Appearance {
+  const o = (src && typeof src === 'object' ? src : {}) as Record<string, unknown>;
+  const a = {} as Appearance;
+  for (const [k, n] of APPEARANCE_RANGES) a[k] = Math.max(0, Math.min(n - 1, Number(o[k]) | 0));
+  return a;
 }
 export function packAppearance(a: Appearance): number {
-  return (a.skin & 7) | ((a.hair & 7) << 3) | ((a.hairStyle & 3) << 6) | ((a.jacket & 15) << 8) | ((a.pants & 7) << 12) | ((a.shoes & 3) << 15) | ((a.build & 3) << 17) | ((a.hat & 3) << 19);
+  let v = 0;
+  for (let i = APPEARANCE_RANGES.length - 1; i >= 0; i--) {
+    const [k, n] = APPEARANCE_RANGES[i];
+    v = v * n + Math.max(0, Math.min(n - 1, a[k] | 0));
+  }
+  return v;
 }
 export function unpackAppearance(v: number): Appearance {
-  return { skin: v & 7, hair: (v >> 3) & 7, hairStyle: (v >> 6) & 3, jacket: (v >> 8) & 15, pants: (v >> 12) & 7, shoes: (v >> 15) & 3, build: (v >> 17) & 3, hat: (v >> 19) & 3 };
+  const a = {} as Appearance;
+  for (const [k, n] of APPEARANCE_RANGES) { a[k] = v % n; v = Math.floor(v / n); }
+  return a;
 }
 
 export interface Profile {
@@ -45,6 +73,15 @@ export interface Profile {
   stats: { km: number; races: number; deliveries: number; busted: number; wasted: number; playSeconds: number };
   /** best race times in seconds by race id */
   best: Record<string, number>;
+  /** saved outfits */
+  outfits?: Appearance[];
+  /** inventory */
+  ammo?: number;
+  weapon?: number;
+  /** last world position */
+  pos?: { x: number; y: number; z: number; yaw: number; lobby?: string; at: number };
+  /** client settings synced to the account */
+  settings?: Record<string, number | boolean | string>;
 }
 export function newProfile(name: string, seed = 1): Profile {
   return { name, appearance: defaultAppearance(seed), money: 1500, xp: 0, garage: [], secrets: [], missions: [], stats: { km: 0, races: 0, deliveries: 0, busted: 0, wasted: 0, playSeconds: 0 }, best: {} };
@@ -94,20 +131,23 @@ export type ServerMsg =
   | { t: 'error'; code: string; text: string }
   | { t: 'social'; friends: FriendInfo[]; requests: { id: string; name: string }[]; invites: { from: string; code: string }[] }
   | { t: 'lobbies'; list: LobbyInfo[] }
-  | { t: 'auth'; ok: boolean; token?: string; account?: { id: string; name: string; guest: boolean }; text?: string };
+  | { t: 'auth'; ok: boolean; token?: string; account?: { id: string; name: string; guest: boolean }; text?: string }
+  | { t: 'search'; results: { id: string; name: string; online: boolean; friend: boolean; pending: boolean }[] };
 
 export interface PlayerInfo { id: number; name: string; look: number; level: number; account?: string }
-export interface LobbyInfo { code: string; name: string; players: number; max: number; private: boolean; host?: string }
+export interface LobbyInfo { code: string; name: string; players: number; max: number; private: boolean; host?: string; sandbox?: boolean }
 export interface FriendInfo { id: string; name: string; online: boolean; lobby?: string }
 
 export type ClientMsg =
   | { t: 'auth'; mode: 'guest' | 'login' | 'register' | 'token'; name?: string; password?: string; token?: string }
-  | { t: 'joinLobby'; code?: string; create?: { private: boolean; name?: string }; quick?: boolean; appearance?: Appearance }
+  | { t: 'joinLobby'; code?: string; create?: { private: boolean; name?: string; sandbox?: boolean }; quick?: boolean; appearance?: Appearance; resume?: boolean }
   | { t: 'leaveLobby' }
   | { t: 'listLobbies' }
   | { t: 'cmd'; c: Command }
   | { t: 'ping'; c: number }
-  | { t: 'friend'; op: 'add' | 'accept' | 'decline' | 'remove' | 'invite' | 'list'; name?: string; id?: string }
+  | { t: 'friend'; op: 'add' | 'accept' | 'decline' | 'remove' | 'invite' | 'list' | 'search'; name?: string; id?: string }
+  | { t: 'outfits'; list: Appearance[] }
+  | { t: 'settings'; s: Record<string, number | boolean | string> }
   | { t: 'report'; player: number; reason: string }
   | { t: 'appearance'; a: Appearance };
 

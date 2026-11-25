@@ -56,7 +56,7 @@ class Client {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
-  proc = spawn('npx', ['tsx', 'src/server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, STATIC_DIR: '/nonexistent' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  proc = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], { env: { ...process.env, PORT: String(PORT), DATA_DIR: dataDir, STATIC_DIR: '/nonexistent' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   proc.stdout!.on('data', (d) => { out += d; });
   proc.stderr!.on('data', (d) => { out += d; });

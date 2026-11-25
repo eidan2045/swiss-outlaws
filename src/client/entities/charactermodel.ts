@@ -93,12 +93,46 @@ function buildGeometry(a: Appearance, police: boolean): THREE.BufferGeometry {
   };
   // ring axes are chosen so that u × v points along the loft direction (outward-facing triangles)
   const tr = (y: number, rx: number, rz: number, col: number, cz = 0): Ring => ({ c: [0, y, cz], u: Z, v: X, ru: rz * bd, rv: rx * bw, col, w: wy(y) });
+  const top = police ? 0 : a.top % 5, legs = police ? 0 : a.legs % 3, feet = police ? 2 : a.feet % 3;
+  const accent = JACKET[(a.jacket + 7) % JACKET.length];
+  const inner = top === 3 ? 0xf2f0ea : jacket; // suit: white shirt collar
+  const puff = top === 4 ? 1.13 : top === 1 ? 1.04 : top === 2 ? 0.97 : 1;
+  const jl = top === 3 || top === 4 ? 0.9 : 1.0; // jacket hem height
   // torso
-  s.tube([
-    tr(0.86, 0.12, 0.09, pants), tr(0.9, 0.158, 0.106, pants), tr(0.97, 0.166, 0.112, pants), tr(1.01, 0.168, 0.113, pants),
-    tr(1.0, 0.178, 0.122, jacket), tr(1.1, 0.158, 0.108, jacket), tr(1.24, 0.174, 0.12, jacket, 0.004), tr(1.36, 0.186, 0.116, jacket, 0.002), tr(1.43, 0.168, 0.1, jacket), tr(1.475, 0.078, 0.074, jacket),
-    tr(1.47, 0.05, 0.054, skin), tr(1.53, 0.05, 0.056, skin, 0.004),
-  ], 12, true, false);
+  const torso: Ring[] = [tr(0.86, 0.12, 0.09, pants), tr(0.9, 0.158, 0.106, pants), tr(0.97, 0.166, 0.112, pants), tr(1.01, 0.168, 0.113, pants)].filter((r) => r.c[1] < jl);
+  torso.push(tr(jl, 0.172 * puff + 0.006, 0.118 * puff + 0.004, jacket));
+  if (top === 4) for (const [y, k] of [[0.98, 1.0], [1.04, 0.95], [1.1, 1.0], [1.17, 0.96], [1.24, 1.02], [1.31, 0.97], [1.37, 1.02]] as [number, number][]) torso.push(tr(y, 0.172 * puff * k, 0.12 * puff * k, jacket));
+  else torso.push(tr(1.1, 0.158 * puff, 0.108 * puff, jacket), tr(1.24, 0.174 * puff, 0.12 * puff, jacket, 0.004), tr(1.36, 0.186 * puff, 0.116 * puff, jacket, 0.002));
+  torso.push(tr(1.43, 0.168 * puff, 0.1 * puff, jacket), tr(1.475, 0.078 * (top === 4 ? 1.25 : 1), 0.074 * (top === 4 ? 1.25 : 1), top === 4 ? jacket : inner));
+  if (top === 4) torso.push(tr(1.52, 0.08, 0.076, jacket));
+  torso.push(tr(1.47, 0.05, 0.054, skin), tr(1.53, 0.05, 0.056, skin, 0.004));
+  torso.sort((p, q) => p.c[1] - q.c[1]);
+  s.tube(torso, 12, true, false);
+  const chest = (y: number): [number, number][] => wy(y);
+  const front = (y: number) => 0.112 * puff * bd + (y > 1.15 ? 0.008 : 0);
+  if (top === 0) {
+    s.box(0, 1.22, front(1.22) + 0.004, 0.006, 0.2, 0.004, 0x2a2a2a, chest(1.22)); // zipper
+    s.tube([tr(1.43, 0.09, 0.085, jacket, -0.004), tr(1.5, 0.085, 0.08, jacket, -0.008)], 12); // collar
+  } else if (top === 1) {
+    // hood resting on the back, kangaroo pocket, drawstrings
+    const hw = (y: number) => chest(Math.min(1.46, y));
+    s.tube([{ c: [0, 1.44, -0.07], u: Z, v: X, ru: 0.06, rv: 0.11, col: jacket, w: hw(1.44) }, { c: [0, 1.5, -0.1], u: Z, v: X, ru: 0.065, rv: 0.115, col: jacket, w: hw(1.46) }, { c: [0, 1.53, -0.12], u: Z, v: X, ru: 0.03, rv: 0.08, col: jacket, w: hw(1.46) }], 10, false, true);
+    s.box(0, 1.1, front(1.1) + 0.006, 0.1 * bw, 0.05, 0.008, jacket, chest(1.1));
+    for (const sx of [-1, 1]) s.box(sx * 0.03, 1.37, front(1.37) + 0.006, 0.004, 0.05, 0.004, 0xeeeeee, chest(1.37));
+  } else if (top === 2) {
+    // small print on the chest
+    s.box(0, 1.3, front(1.3) + 0.003, 0.045, 0.045, 0.003, accent, chest(1.3));
+    s.box(0, 1.3, front(1.3) + 0.007, 0.012, 0.03, 0.002, 0xffffff, chest(1.3));
+    s.box(0, 1.3, front(1.3) + 0.007, 0.03, 0.012, 0.002, 0xffffff, chest(1.3));
+  } else if (top === 3) {
+    // shirt front, tie, lapels
+    s.box(0, 1.36, front(1.36) + 0.002, 0.035, 0.08, 0.004, 0xf2f0ea, chest(1.36));
+    s.box(0, 1.33, front(1.33) + 0.008, 0.013, 0.1, 0.004, accent, chest(1.33));
+    for (const sx of [-1, 1]) s.box(sx * 0.055, 1.35, front(1.35) + 0.006, 0.022, 0.09, 0.004, jacket, chest(1.35));
+    for (const y of [1.16, 1.06]) s.box(0.02, y, front(y) + 0.006, 0.006, 0.006, 0.004, 0x1a1a1a, chest(y));
+  } else {
+    s.box(0, 1.22, front(1.22) + 0.01, 0.006, 0.22, 0.004, 0x222222, chest(1.22));
+  }
   // head
   const hr = (y: number, rx: number, rz: number, cz: number, col = skin): Ring => ({ c: [0, y, cz], u: Z, v: X, ru: rz, rv: rx, col, w: [[B.head, 1]] });
   s.tube([hr(1.53, 0.052, 0.058, 0.006), hr(1.565, 0.068, 0.08, 0.012), hr(1.61, 0.079, 0.093, 0.012), hr(1.66, 0.083, 0.098, 0.008), hr(1.71, 0.081, 0.097, 0.004), hr(1.755, 0.064, 0.078, 0), hr(1.785, 0.03, 0.036, 0)], 12, false, true);
@@ -107,23 +141,72 @@ function buildGeometry(a: Appearance, police: boolean): THREE.BufferGeometry {
   for (const sx of [-1, 1]) s.box(sx * 0.031, 1.668, 0.0935, 0.011, 0.006, 0.004, 0x1a1512, [[B.head, 1]]);
   s.box(0, 1.596, 0.092, 0.018, 0.003, 0.004, 0x7a4a40, [[B.head, 1]]);
   for (const sx of [-1, 1]) s.box(sx * 0.084, 1.645, 0.004, 0.006, 0.022, 0.013, skin, [[B.head, 1]]);
+  const H1: [number, number][] = [[B.head, 1]];
+  // disc (both faces) for brims
+  const disc = (y: number, r0: number, r1: number, rz0: number, rz1: number, col: number, cz = 0) => {
+    s.tube([hr(y, r0, rz0, cz, col), hr(y + 0.001, r1, rz1, cz, col)], 14);
+    s.tube([hr(y - 0.004, r1, rz1, cz, col), hr(y - 0.003, r0, rz0, cz, col)], 14);
+  };
   // hair / headwear
+  const hat = police ? 0 : a.hat % 4;
+  const hs = a.hairStyle % 7;
+  const shortHair = () => s.tube([hr(1.6, 0.084, 0.07, -0.04, hair), hr(1.69, 0.087, 0.085, -0.025, hair)], 10);
   if (police) {
     s.tube([hr(1.7, 0.09, 0.104, 0.004, 0x10182a), hr(1.75, 0.092, 0.106, 0.004, 0x10182a), hr(1.79, 0.088, 0.1, 0.002, 0x10182a), hr(1.8, 0.02, 0.02, 0, 0x10182a)], 12, false, true);
-    s.box(0, 1.705, 0.11, 0.07, 0.006, 0.04, 0x0b101c, [[B.head, 1]]);
-  } else if (a.hat === 1) {
-    const cap = JACKET[(a.jacket + 5) % JACKET.length];
+    s.box(0, 1.705, 0.11, 0.07, 0.006, 0.04, 0x0b101c, H1);
+  } else if (hat === 1) {
+    const cap = accent;
     s.tube([hr(1.69, 0.088, 0.103, 0.004, cap), hr(1.74, 0.086, 0.1, 0.002, cap), hr(1.785, 0.06, 0.072, 0, cap), hr(1.8, 0.02, 0.02, 0, cap)], 12, false, true);
-    s.box(0, 1.698, 0.115, 0.062, 0.005, 0.045, cap, [[B.head, 1]]);
-    s.tube([hr(1.6, 0.084, 0.07, -0.04, hair), hr(1.69, 0.087, 0.085, -0.025, hair)], 10);
-  } else if (a.hairStyle !== 2) {
-    const long = a.hairStyle === 1, big = a.hairStyle === 3;
+    s.box(0, 1.698, 0.115, 0.062, 0.005, 0.045, cap, H1);
+    if (hs !== 2) shortHair();
+  } else if (hat === 2) {
+    const b = accent;
+    s.tube([hr(1.66, 0.091, 0.104, 0.002, b), hr(1.7, 0.092, 0.106, 0.002, b), hr(1.71, 0.087, 0.101, 0.002, b), hr(1.77, 0.08, 0.094, 0, b), hr(1.81, 0.05, 0.06, 0, b), hr(1.83, 0.012, 0.012, 0, b)], 12, false, true);
+    if (hs !== 2) shortHair();
+  } else if (hat === 3) {
+    const b = 0x3a2f26;
+    s.tube([hr(1.7, 0.088, 0.103, 0.002, b), hr(1.77, 0.084, 0.098, 0, b), hr(1.82, 0.078, 0.09, 0, b), hr(1.825, 0.03, 0.035, 0, b)], 12, false, true);
+    s.tube([hr(1.705, 0.09, 0.105, 0.002, 0x1a1512), hr(1.725, 0.09, 0.105, 0.002, 0x1a1512)], 12);
+    disc(1.703, 0.088, 0.16, 0.103, 0.17, b);
+    if (hs !== 2) shortHair();
+  } else if (hs !== 2) {
+    const long = hs === 1, big = hs === 3, under = hs === 6;
     const rings: Ring[] = [];
     if (long) rings.push(hr(1.49, 0.07, 0.05, -0.052, hair), hr(1.55, 0.088, 0.066, -0.042, hair));
-    rings.push(hr(1.615, 0.089, 0.082, -0.03, hair), hr(1.67, 0.09 + (big ? 0.012 : 0), 0.098 + (big ? 0.01 : 0), -0.016, hair), hr(1.725, 0.088 + (big ? 0.014 : 0), 0.103 + (big ? 0.01 : 0), -0.006, hair), hr(1.775, 0.07 + (big ? 0.012 : 0), 0.084, -0.002, hair), hr(1.802 + (big ? 0.012 : 0), 0.025, 0.03, 0, hair));
+    if (under) rings.push(hr(1.615, 0.086, 0.08, -0.03, hair), hr(1.7, 0.085, 0.1, -0.012, hair), hr(1.74, 0.07, 0.106, -0.004, hair), hr(1.8, 0.068, 0.1, 0, hair), hr(1.835, 0.03, 0.06, 0, hair));
+    else rings.push(hr(1.615, 0.089, 0.082, -0.03, hair), hr(1.67, 0.09 + (big ? 0.012 : 0), 0.098 + (big ? 0.01 : 0), -0.016, hair), hr(1.725, 0.088 + (big ? 0.014 : 0), 0.103 + (big ? 0.01 : 0), -0.006, hair), hr(1.775, 0.07 + (big ? 0.012 : 0), 0.084, -0.002, hair), hr(1.802 + (big ? 0.012 : 0), 0.025, 0.03, 0, hair));
     s.tube(rings, 12, long, true);
+    if (hs === 4) {
+      // ponytail
+      const pr = (y: number, r: number, cz: number): Ring => ({ c: [0, y, cz], u: Z, v: X, ru: r, rv: r, col: hair, w: H1 });
+      s.tube([pr(1.7, 0.03, -0.1), pr(1.66, 0.034, -0.12), pr(1.58, 0.03, -0.13), pr(1.5, 0.022, -0.125), pr(1.45, 0.006, -0.115)], 8, true, true);
+    } else if (hs === 5) {
+      const pr = (y: number, r: number): Ring => ({ c: [0, y, -0.06], u: Z, v: X, ru: r, rv: r, col: hair, w: H1 });
+      s.tube([pr(1.76, 0.02), pr(1.78, 0.045), pr(1.82, 0.05), pr(1.855, 0.03), pr(1.865, 0.005)], 10, true, true);
+    }
+  }
+  // accessories
+  const acc = police ? 0 : a.acc % 5;
+  if (acc === 1 || acc === 2) {
+    const frame = acc === 1 ? 0x222222 : 0x111111, lens = acc === 2 ? 0x0c0c10 : 0x9fb4c4;
+    for (const sx of [-1, 1]) {
+      s.box(sx * 0.033, 1.668, 0.104, 0.024, acc === 2 ? 0.016 : 0.014, 0.003, lens, H1);
+      s.box(sx * 0.033, 1.684, 0.104, 0.026, 0.0025, 0.004, frame, H1);
+      s.box(sx * 0.081, 1.676, 0.05, 0.003, 0.003, 0.05, frame, H1);
+    }
+    s.box(0, 1.676, 0.105, 0.01, 0.003, 0.003, frame, H1);
+  } else if (acc === 3) {
+    const bp = accent, back = -0.118 * bd;
+    s.box(0, 1.24, back - 0.07, 0.12 * bw, 0.17, 0.07, bp, chest(1.3));
+    s.box(0, 1.15, back - 0.142, 0.09 * bw, 0.07, 0.008, 0x222222, chest(1.3));
+    for (const sx of [-1, 1]) s.box(sx * 0.09 * bw, 1.3, front(1.3) + 0.004, 0.016, 0.14, 0.004, 0x1c1c1c, chest(1.3));
+  } else if (acc === 4) {
+    const sc = accent;
+    s.tube([tr(1.43, 0.11, 0.09, sc, 0.004), tr(1.47, 0.085, 0.085, sc, 0.006), tr(1.52, 0.075, 0.08, sc, 0.006)], 12, false, false);
+    s.box(0.04, 1.33, front(1.33) + 0.012, 0.025, 0.09, 0.008, sc, chest(1.4));
   }
   // arms (T-pose along ±x)
+  const sleeveEnd = top === 2 ? 0.34 : 0.69, sl = top === 4 ? 1.18 : top === 1 ? 1.06 : 1;
   for (const sx of [1, -1]) {
     const U = sx > 0 ? B.uArmL : B.uArmR, F = sx > 0 ? B.fArmL : B.fArmR, H = sx > 0 ? B.handL : B.handR;
     const aw = (x: number): [number, number][] => {
@@ -133,8 +216,11 @@ function buildGeometry(a: Appearance, police: boolean): THREE.BufferGeometry {
       return [[F, 1 - t], [H, t]];
     };
     const ar = (x: number, ry: number, rz: number, col: number, cy = 1.42): Ring => ({ c: [sx * x, cy, 0], u: Y, v: sx > 0 ? Z : [0, 0, -1], ru: ry * bw, rv: rz * bw, col, w: aw(x) });
-    s.tube([ar(0.14, 0.07, 0.07, jacket, 1.4), ar(0.2, 0.062, 0.064, jacket, 1.415), ar(0.32, 0.05, 0.053, jacket), ar(0.45, 0.044, 0.046, jacket), ar(0.58, 0.04, 0.043, jacket), ar(0.69, 0.034, 0.038, jacket),
-      ar(0.69, 0.028, 0.033, skin), ar(0.73, 0.022, 0.037, skin), ar(0.8, 0.018, 0.042, skin), ar(0.865, 0.014, 0.036, skin), ar(0.895, 0.006, 0.016, skin)], 8, true, true);
+    const rings: Ring[] = [ar(0.14, 0.07 * sl, 0.07 * sl, jacket, 1.4), ar(0.2, 0.062 * sl, 0.064 * sl, jacket, 1.415), ar(0.32, 0.05 * sl, 0.053 * sl, jacket)];
+    if (top === 2) rings.push(ar(0.345, 0.047, 0.05, jacket), ar(0.345, 0.04, 0.043, skin), ar(0.45, 0.04, 0.042, skin), ar(0.58, 0.036, 0.039, skin), ar(0.69, 0.031, 0.035, skin));
+    else rings.push(ar(0.45, 0.044 * sl, 0.046 * sl, jacket), ar(0.58, 0.04 * sl, 0.043 * sl, jacket), ar(sleeveEnd, 0.034 * sl, 0.038 * sl, top === 3 ? 0xf2f0ea : jacket));
+    rings.push(ar(0.69, 0.028, 0.033, skin), ar(0.73, 0.022, 0.037, skin), ar(0.8, 0.018, 0.042, skin), ar(0.865, 0.014, 0.036, skin), ar(0.895, 0.006, 0.016, skin));
+    s.tube(rings, 8, true, true);
   }
   // legs
   for (const sx of [1, -1]) {
@@ -146,10 +232,22 @@ function buildGeometry(a: Appearance, police: boolean): THREE.BufferGeometry {
       return [[S, 1 - t], [F, t]];
     };
     const lr = (y: number, rx: number, rz: number, col: number, cz = 0): Ring => ({ c: [sx * 0.095, y, cz], u: X, v: Z, ru: rx * bw, rv: rz * bd, col, w: lw(y) });
-    s.tube([lr(0.95, 0.082, 0.092, pants), lr(0.86, 0.088, 0.096, pants), lr(0.72, 0.076, 0.082, pants), lr(0.52, 0.058, 0.062, pants, 0.004), lr(0.38, 0.056, 0.06, pants, -0.008), lr(0.2, 0.044, 0.048, pants, -0.004), lr(0.1, 0.046, 0.05, pants)], 8, true, true);
+    const boot = feet === 1 ? shoes : 0;
+    let rings: Ring[];
+    if (legs === 1) rings = [lr(0.95, 0.082, 0.092, pants), lr(0.86, 0.088, 0.096, pants), lr(0.72, 0.078, 0.084, pants), lr(0.56, 0.072, 0.076, pants), lr(0.56, 0.058, 0.062, skin), lr(0.38, 0.05, 0.055, skin, -0.008), lr(0.2, 0.038, 0.043, skin, -0.004), lr(0.1, 0.04, 0.045, skin)];
+    else rings = [lr(0.95, 0.082, 0.092, pants), lr(0.86, 0.088, 0.096, pants), lr(0.72, 0.076, 0.082, pants), lr(0.52, 0.058, 0.062, pants, 0.004), lr(0.38, 0.056, 0.06, pants, -0.008), lr(0.2, 0.044 * (legs === 2 ? 0.92 : 1), 0.048, pants, -0.004), lr(0.1, 0.046, 0.05, pants)];
+    if (boot) rings = rings.filter((r) => r.c[1] > 0.26).concat([lr(0.25, 0.05, 0.055, boot), lr(0.1, 0.05, 0.055, boot)]);
+    s.tube(rings, 8, true, true);
+    if (legs === 2) {
+      // track-pants side stripes
+      s.box(sx * (0.095 + 0.079 * bw), 0.72, 0, 0.004, 0.18, 0.009, 0xf2f2f2, lw(0.72));
+      s.box(sx * (0.095 + 0.055 * bw), 0.32, 0, 0.004, 0.14, 0.008, 0xf2f2f2, lw(0.32));
+    }
     // shoe: loft along z
-    const sr = (z: number, rx: number, ry: number, cy: number): Ring => ({ c: [sx * 0.095, cy, z], u: X, v: Y, ru: rx, rv: ry, col: shoes, w: [[F, 1]] });
-    s.tube([sr(-0.085, 0.036, 0.04, 0.05), sr(-0.04, 0.047, 0.055, 0.056), sr(0.04, 0.05, 0.048, 0.05), sr(0.11, 0.05, 0.036, 0.038), sr(0.165, 0.04, 0.024, 0.026)], 8, true, true);
+    const k = feet === 2 ? 0.88 : feet === 1 ? 1.08 : 1;
+    const sr = (z: number, rx: number, ry: number, cy: number, col = shoes): Ring => ({ c: [sx * 0.095, cy, z], u: X, v: Y, ru: rx * k, rv: ry, col, w: [[F, 1]] });
+    s.tube([sr(-0.085, 0.036, 0.04, 0.05), sr(-0.04, 0.047, 0.055, 0.056), sr(0.04, 0.05, 0.048, 0.05), sr(0.11, 0.05, 0.036 * (feet === 2 ? 0.8 : 1), 0.038), sr(0.165 + (feet === 2 ? 0.015 : 0), 0.04, 0.024, 0.026)], 8, true, true);
+    if (feet === 0) s.box(sx * 0.095, 0.012, 0.04, 0.05, 0.012, 0.125, 0xf0f0ec, [[F, 1]]);
   }
   if (police) {
     s.box(0, 1.3, 0.125 * bd, 0.07, 0.016, 0.004, 0xe8e8e8, [[B.chest, 1]]);
@@ -169,6 +267,7 @@ function buildGeometry(a: Appearance, police: boolean): THREE.BufferGeometry {
 
 let sharedMat: THREE.MeshStandardMaterial | null = null;
 let gunGeo: THREE.BufferGeometry | null = null;
+let espMats: THREE.MeshBasicMaterial[] | null = null;
 
 // ---------------------------------------------------------------- pose
 interface Arm { x: number; y: number; z: number; bend: number }
@@ -278,6 +377,36 @@ export class CharacterModel {
     this.gun.rotation.set(0, -Math.PI / 2, 0);
     this.gun.visible = false;
     this.bones[B.handR].add(this.gun);
+  }
+
+  private esp: THREE.SkinnedMesh[] | null = null;
+  /** Red outline that stays visible through walls (sandbox ESP). */
+  setOutline(on: boolean): void {
+    if (on && !this.esp) {
+      if (!espMats) {
+        const mk = (expand: number, color: number, opacity: number, side: THREE.Side) => {
+          const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, side, fog: false, toneMapped: false });
+          m.onBeforeCompile = (sh) => { sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>\ntransformed += normalize(objectNormal) * ${expand.toFixed(3)};`); };
+          m.customProgramCacheKey = () => 'esp' + expand;
+          return m;
+        };
+        espMats = [mk(0.035, 0xff1e1e, 0.95, THREE.BackSide), mk(0.0, 0x3a0000, 0.55, THREE.FrontSide)];
+      }
+      this.esp = espMats.map((mat, i) => {
+        const m = new THREE.SkinnedMesh(this.mesh.geometry, mat);
+        m.bind(this.mesh.skeleton, this.mesh.bindMatrix);
+        m.frustumCulled = false;
+        m.renderOrder = 990 + i;
+        this.mesh.add(m);
+        return m;
+      });
+    } else if (!on && this.esp) {
+      for (const m of this.esp) this.mesh.remove(m);
+      this.esp = null;
+    }
+  }
+  get outlined(): boolean {
+    return !!this.esp;
   }
 
   /** World position of the head (camera target, name tags). */

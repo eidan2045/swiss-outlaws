@@ -5,7 +5,7 @@ import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { buildWorld } from '../shared/world/world';
 import { GameRoom, RoomPlayer } from '../shared/sim/room';
-import { ClientMsg, FriendInfo, LobbyInfo, Pkt, Reader, ServerMsg, decodeInputs } from '../shared/net/protocol';
+import { ClientMsg, FriendInfo, LobbyInfo, Pkt, Reader, ServerMsg, decodeInputs, sanitizeAppearance } from '../shared/net/protocol';
 import { DT } from '../shared/sim/types';
 import { Account, Store } from './store';
 
@@ -55,10 +55,13 @@ function newCode(): string {
     if (!lobbies.has(s)) return s;
   }
 }
-function createLobby(name: string, priv: boolean): Lobby {
-  const code = newCode();
+function createLobby(name: string, priv: boolean, sandbox = false, owner = '', fixedCode?: string): Lobby {
+  const code = fixedCode ?? newCode();
+  sandbox = sandbox && priv; // aim assist / ESP only in private lobbies
+  store.lobbies[code] = { name: name.slice(0, 32) || 'Lobby', private: priv, sandbox, owner, last: Date.now() };
+  store.touch();
   const room = new GameRoom(world, {
-    code, name: name.slice(0, 32) || 'Lobby', private: priv, maxPlayers: MAX_PLAYERS, seed: Math.floor(Math.random() * 1e9),
+    code, name: name.slice(0, 32) || 'Lobby', private: priv, sandbox, maxPlayers: MAX_PLAYERS, seed: Math.floor(Math.random() * 1e9),
     saveProfile: (accountId, profile) => {
       const a = store.get(accountId);
       if (a) { a.profile = profile; store.touch(); }
@@ -66,7 +69,7 @@ function createLobby(name: string, priv: boolean): Lobby {
   });
   const l: Lobby = { room, code, emptySince: Date.now(), acc: 0, last: performance.now(), invited: new Set() };
   lobbies.set(code, l);
-  console.log(`[lobby] created ${code} "${name}" (${priv ? 'private' : 'public'})`);
+  console.log(`[lobby] ${fixedCode ? 'restored' : 'created'} ${code} "${name}" (${priv ? 'private' : 'public'}${sandbox ? ', sandbox' : ''})`);
   return l;
 }
 function lobbyList(): LobbyInfo[] {
@@ -79,7 +82,7 @@ function social(c: Conn): void {
     const f = store.get(id);
     const oc = online.get(id);
     const lob = oc?.lobby;
-    return { id, name: f?.name ?? '?', online: !!oc, lobby: lob && (!lob.room.opts.private || lob.invited.has(a.id)) ? lob.code : undefined };
+    return { id, name: f?.name ?? '?', online: !!oc, lobby: lob ? lob.code : undefined };
   });
   const requests = a.requests.map((id) => ({ id, name: store.get(id)?.name ?? '?' }));
   send(c, { t: 'social', friends, requests, invites: [] });
@@ -166,15 +169,23 @@ function onJson(c: Conn, m: ClientMsg): void {
     case 'listLobbies': send(c, { t: 'lobbies', list: lobbyList() }); break;
     case 'joinLobby': {
       if (m.appearance && typeof m.appearance === 'object') {
-        const ap = m.appearance, cl = (v: unknown, n: number) => Math.max(0, Math.min(n, Number(v) | 0));
-        a.profile.appearance = { skin: cl(ap.skin, 4), hair: cl(ap.hair, 5), hairStyle: cl(ap.hairStyle, 3), jacket: cl(ap.jacket, 15), pants: cl(ap.pants, 7), shoes: cl(ap.shoes, 3), build: cl(ap.build, 2), hat: cl(ap.hat, 1) };
+        a.profile.appearance = sanitizeAppearance(m.appearance);
         store.touch();
       }
       let l: Lobby | undefined;
       if (m.code) {
-        l = lobbies.get(String(m.code).toUpperCase().trim());
+        const code = String(m.code).toUpperCase().trim().slice(0, 8);
+        l = lobbies.get(code);
+        // the lobby existed before a server restart: recreate it under the same code
+        const meta = store.lobbies[code];
+        if (!l && meta) l = createLobby(meta.name, meta.private, meta.sandbox, meta.owner, code);
+        if (!l && m.resume) {
+          // the original session is gone: continue in a fresh world with the saved progress
+          l = [...lobbies.values()].filter((x) => !x.room.opts.private && x.room.playerCount < x.room.opts.maxPlayers)[0] ?? createLobby('Zürich öffentlich', false);
+          send(c, { t: 'toast', text: 'Die letzte Spielwelt existiert nicht mehr – dein Fortschritt wurde übernommen.', kind: 'info' });
+        }
         if (!l) { send(c, { t: 'error', code: 'nolobby', text: 'Lobby nicht gefunden.' }); return; }
-      } else if (m.create) l = createLobby(String(m.create.name || `${a.name}s Lobby`), !!m.create.private);
+      } else if (m.create) l = createLobby(String(m.create.name || `${a.name}s Lobby`), !!m.create.private, !!m.create.sandbox, a.id);
       else {
         l = [...lobbies.values()].filter((x) => !x.room.opts.private && x.room.playerCount < x.room.opts.maxPlayers).sort((x, y) => y.room.playerCount - x.room.playerCount)[0];
         if (!l) l = createLobby('Zürich öffentlich', false);
@@ -184,7 +195,22 @@ function onJson(c: Conn, m: ClientMsg): void {
     }
     case 'leaveLobby': leaveLobby(c, true); break;
     case 'cmd': if (c.lobby && c.player) c.lobby.room.handleCommand(c.player.id, m.c); break;
-    case 'appearance': break; // applied on the next join
+    case 'appearance':
+      if (c.lobby && c.player) c.lobby.room.setAppearance(c.player.id, m.a);
+      else a.profile.appearance = sanitizeAppearance(m.a);
+      store.touch();
+      break;
+    case 'outfits':
+      if (Array.isArray(m.list)) { a.profile.outfits = m.list.slice(0, 6).map((x) => sanitizeAppearance(x)); store.touch(); }
+      break;
+    case 'settings':
+      if (m.s && typeof m.s === 'object' && JSON.stringify(m.s).length < 2000) {
+        const clean: Record<string, number | boolean | string> = {};
+        for (const [k, v] of Object.entries(m.s)) if (/^[a-zA-Z]{1,24}$/.test(k) && ['number', 'boolean', 'string'].includes(typeof v)) clean[k] = typeof v === 'string' ? v.slice(0, 120) : v;
+        a.profile.settings = clean;
+        store.touch();
+      }
+      break;
     case 'report': {
       const target = c.lobby?.room.players.get(Number(m.player));
       if (target) {
@@ -196,8 +222,22 @@ function onJson(c: Conn, m: ClientMsg): void {
     }
     case 'friend': {
       if (m.op === 'list') { social(c); break; }
+      if (m.op === 'search') {
+        const q = String(m.name ?? '').trim().replace(/^#/, '').toLowerCase().slice(0, 24);
+        const results: { id: string; name: string; online: boolean; friend: boolean; pending: boolean }[] = [];
+        if (q.length >= 2) {
+          for (const o of store.all()) {
+            if (o.id === a.id) continue;
+            if (o.id.toLowerCase() === q || o.name.toLowerCase().includes(q)) results.push({ id: o.id, name: o.name, online: online.has(o.id), friend: a.friends.includes(o.id), pending: o.requests.includes(a.id) });
+            if (results.length >= 12) break;
+          }
+          results.sort((x, y) => Number(y.name.toLowerCase() === q || y.id.toLowerCase() === q) - Number(x.name.toLowerCase() === q || x.id.toLowerCase() === q) || Number(y.online) - Number(x.online));
+        }
+        send(c, { t: 'search', results });
+        break;
+      }
       if (m.op === 'add') {
-        const f = store.findByName(String(m.name ?? ''));
+        const f = (m.id ? store.get(String(m.id)) : undefined) ?? store.findByName(String(m.name ?? '').replace(/^#/, '')) ?? store.get(String(m.name ?? '').replace(/^#/, ''));
         if (!f || f.id === a.id) { send(c, { t: 'toast', text: 'Spieler nicht gefunden.', kind: 'bad' }); break; }
         if (a.friends.includes(f.id)) { send(c, { t: 'toast', text: 'Ihr seid bereits befreundet.', kind: 'info' }); break; }
         if (f.blocked.includes(a.id)) { send(c, { t: 'toast', text: 'Anfrage gesendet.', kind: 'info' }); break; }
@@ -329,7 +369,11 @@ setInterval(() => {
       if (Date.now() - l.emptySince > 60000) { lobbies.delete(l.code); console.log(`[lobby] closed ${l.code}`); }
       continue;
     }
-    if (l.room.playerCount > 0) l.emptySince = Date.now();
+    if (l.room.playerCount > 0) {
+      l.emptySince = Date.now();
+      const meta = store.lobbies[l.code];
+      if (meta && Date.now() - meta.last > 60000) { meta.last = Date.now(); store.touch(); }
+    }
     l.acc += (now - l.last) / 1000;
     l.last = now;
     if (l.acc > 0.25) l.acc = 0.25; // never spiral after a stall

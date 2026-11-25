@@ -2,7 +2,7 @@
 // Transport-agnostic – runs in Node (WebSocket server) and in the browser (offline / loopback mode).
 import { Rng, clamp, dist2 } from '../math';
 import type { World } from '../world/world';
-import { ANG, Command, PROTOCOL_VERSION, Pkt, PlayerInfo, Profile, ServerMsg, SNAPSHOT_HZ, Writer, levelForXp, packAppearance, writeChar, writeVeh, LobbyInfo } from '../net/protocol';
+import { ANG, Command, PROTOCOL_VERSION, Pkt, PlayerInfo, Profile, ServerMsg, SNAPSHOT_HZ, Writer, levelForXp, packAppearance, sanitizeAppearance, writeChar, writeVeh, LobbyInfo } from '../net/protocol';
 import { BTN, CF, CHAR_RADIUS, CharMode, CharState, DT, InputCmd, TICK_RATE, VF, VehState, VehicleSpec, emptyInput, newChar, newVeh, vehicleSpec } from './types';
 import { DynCircle, charEvents, knockDown, stepCharacter } from './character';
 import { VehInput, bodyCircles, collideVehicles, damageVehicle, stepVehicle, vehEvents } from './vehicle';
@@ -95,6 +95,8 @@ export interface RoomOptions {
   private: boolean;
   maxPlayers: number;
   seed?: number;
+  /** sandbox: aim assist / ESP allowed (private lobbies and single player only) */
+  sandbox?: boolean;
   /** called whenever a profile should be persisted */
   saveProfile?: (accountId: string, profile: Profile) => void;
 }
@@ -139,7 +141,7 @@ export class GameRoom {
   get info(): LobbyInfo {
     let n = 0;
     for (const p of this.players.values()) if (p.connected) n++;
-    return { code: this.opts.code, name: this.opts.name, players: n, max: this.opts.maxPlayers, private: this.opts.private };
+    return { code: this.opts.code, name: this.opts.name, players: n, max: this.opts.maxPlayers, private: this.opts.private, sandbox: !!this.opts.sandbox };
   }
   get playerCount(): number {
     let n = 0;
@@ -161,11 +163,15 @@ export class GameRoom {
       }
     }
     const id = this.nextPlayer++;
-    const sp = this.spawnPoint(id);
+    profile.appearance = sanitizeAppearance(profile.appearance);
+    let sp = this.spawnPoint(id);
+    // restore the last saved position (progress survives a closed lobby or a server restart)
+    const pos = profile.pos;
+    if (pos && Number.isFinite(pos.x + pos.z + pos.yaw) && this.world.inBounds(pos.x, pos.z, 20) && this.world.waterDepthAt(pos.x, pos.z) < 0.3 && this.isFree(pos.x, pos.z, this.world.groundAt(pos.x, pos.z))) sp = { x: pos.x, z: pos.z, yaw: pos.yaw };
     const p: RoomPlayer = {
       id, name: profile.name, accountId, look: packAppearance(profile.appearance), profile,
       char: newChar(sp.x, this.world.groundAt(sp.x, sp.z), sp.z, sp.yaw), veh: 0, seat: 0,
-      inputs: [], last: emptyInput(), ack: 0, wanted: 0, heat: 0, unseen: 99, ammo: 48, weapon: 1, meleeHitT: 0, respawnT: 0, lastHurtT: -99,
+      inputs: [], last: emptyInput(), ack: 0, wanted: 0, heat: 0, unseen: 99, ammo: Math.max(0, Math.min(240, profile.ammo ?? 48)), weapon: profile.weapon === 0 ? 0 : 1, meleeHitT: 0, respawnT: 0, lastHurtT: -99,
       mission: null, connected: true, dcTick: 0, chatTimes: [], kmAcc: 0, dirty: false, send,
     };
     this.players.set(id, p);
@@ -199,8 +205,21 @@ export class GameRoom {
     this.players.delete(id);
     this.broadcast({ t: 'leave', id });
   }
+  /** Change a player's look (character menu); everybody rebuilds the model. */
+  setAppearance(id: number, a: unknown): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    p.profile.appearance = sanitizeAppearance(a);
+    p.look = packAppearance(p.profile.appearance);
+    this.save(p);
+    this.broadcast({ t: 'join', p: this.playerInfo(p) });
+  }
   save(p: RoomPlayer): void {
     p.dirty = false;
+    const c = p.char;
+    if (c.mode !== CharMode.Dead && Number.isFinite(c.x + c.z)) p.profile.pos = { x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, z: Math.round(c.z * 10) / 10, yaw: Math.round(c.yaw * 100) / 100, lobby: this.opts.code, at: Date.now() };
+    p.profile.ammo = p.ammo;
+    p.profile.weapon = p.weapon;
     this.opts.saveProfile?.(p.accountId, p.profile);
   }
   spawnPoint(seed: number): { x: number; z: number; yaw: number } {
@@ -590,7 +609,7 @@ export class GameRoom {
         p.meleeHitT -= DT;
         if (p.meleeHitT <= 0) this.melee(p);
       }
-      if (p.dirty && this.tick % (TICK_RATE * 20) === p.id % (TICK_RATE * 20)) this.save(p);
+      if (this.tick % (TICK_RATE * 15) === p.id % (TICK_RATE * 15)) this.save(p);
       if (this.tick % TICK_RATE === 0) p.profile.stats.playSeconds++;
     }
 

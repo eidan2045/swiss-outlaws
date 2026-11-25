@@ -1,7 +1,7 @@
 // Application shell: boot, menus, settings, online flow (accounts, lobbies, friends) and the game session lifecycle.
 import * as THREE from 'three';
 import { buildWorld, World } from '../shared/world/world';
-import { Appearance, FriendInfo, LobbyInfo, MissionView, Profile, ServerMsg } from '../shared/net/protocol';
+import { Appearance, FriendInfo, LobbyInfo, MissionView, Profile, ServerMsg, defaultAppearance, sanitizeAppearance } from '../shared/net/protocol';
 import { VEHICLES } from '../shared/sim/types';
 import { ACTIVITIES, SECRETS } from '../shared/sim/missions';
 import { Engine } from './render/engine';
@@ -14,7 +14,8 @@ import { AudioSystem } from './audio/audio';
 import { Hud, chf, el, esc } from './ui/hud';
 import { MapView } from './ui/mapview';
 import { CharacterModel, HAIR, JACKET, PANTS, SHOES, SKIN } from './entities/charactermodel';
-import { Settings, loadProfile, loadSettings, saveProfile, saveSettings } from './settings';
+import { ACC_L, FEET_L, HAIR_L, HAT_L, LEGS_L, OUTFIT_PRESETS, TOP_L } from './ui/outfits';
+import { SYNCED_KEYS, Settings, loadProfile, loadSettings, saveProfile, saveSettings } from './settings';
 import './ui/style.css';
 
 declare const __SINGLE_FILE__: boolean;
@@ -126,13 +127,27 @@ export class App implements GameUi {
     setTimeout(() => loading.remove(), 400);
     (window as unknown as { __dbg: unknown }).__dbg = this.dbg = { app: this, engine: this.engine, world: this.world, view: this.view, input: this.input, frames: 0, fps: 0 };
     requestAnimationFrame((t) => this.loop(t));
+    window.addEventListener('pagehide', () => this.saveLocal());
+    window.addEventListener('beforeunload', () => this.saveLocal());
     const code = params.get('join');
+    const last = this.settings.lastSession;
     if (params.has('play')) this.startOffline();
     else if (code && this.serverUrl) { this.lobbyCode = code.toUpperCase(); this.show(this.titleScreen()); this.openOnline(); }
-    else this.show(this.titleScreen());
+    else if (last && !params.has('menu') && Date.now() - last.at < 7 * 86400000) {
+      // auto-rejoin the world that was open before the reload / restart
+      if (last.mode === 'offline') this.startOffline();
+      else if (last.server) {
+        this.serverUrl = last.server;
+        this.lobbyCode = last.code;
+        this.resuming = true;
+        this.show(this.titleScreen());
+        this.openOnline();
+      } else this.show(this.titleScreen());
+    } else this.show(this.titleScreen());
   }
 
-  private applySettings(): void {
+  private applySettings(push = true): void {
+    if (push) this.pushSettings();
     const s = this.settings;
     this.audio.setVolumes(s.master, s.music, s.sfx);
     this.audio.music(true);
@@ -168,6 +183,11 @@ export class App implements GameUi {
         }
         if (this.game.effects.flash > 0.9) this.audio.thunder();
       }
+      if (this.ccMode === 'game') {
+        this.menuT += dt;
+        const p = this.game.previewMe(dt);
+        this.framePreview(p.x, p.y, p.z, p.yaw);
+      }
     } else {
       // menu backdrop: slow fly-over of the city and the lake
       this.input.poll(dt);
@@ -175,16 +195,14 @@ export class App implements GameUi {
       const cam = this.engine.camera;
       if (this.preview) {
         const p = this.preview.group.position;
-        const a = 0.5 + Math.sin(this.menuT * 0.25) * 0.25;
-        cam.position.set(p.x + Math.sin(a) * 3.1, p.y + 1.45, p.z + Math.cos(a) * 3.1);
-        cam.lookAt(p.x - 0.75, p.y + 1.02, p.z);
-        this.preview.update(dt, PREVIEW_ANIM, p.x, p.y, p.z, 0.35 + Math.sin(this.menuT * 0.4) * 0.25);
+        this.preview.update(dt, PREVIEW_ANIM, p.x, p.y, p.z, 0.4);
+        this.framePreview(p.x, p.y, p.z, 0.4);
       } else {
         const a = this.menuT * 0.02 + 2.4;
         cam.position.set(-60 + Math.sin(a) * 620, 95 + Math.sin(this.menuT * 0.05) * 25, 80 + Math.cos(a) * 620);
         cam.lookAt(-60, 18, 40);
       }
-      if (cam.fov !== 50) { cam.fov = 50; cam.updateProjectionMatrix(); }
+      if (!this.preview && cam.fov !== 50) { cam.fov = 50; cam.updateProjectionMatrix(); }
       this.view.hours = 17.2 + Math.sin(this.menuT * 0.01) * 0.6;
       this.view.update(dt, _focus.set(cam.position.x, 20, cam.position.z).lerp(_zero, 0.4));
       this.screen?.tick?.(dt);
@@ -313,7 +331,7 @@ export class App implements GameUi {
           range.value = String(Math.max(Number(range.min), Math.min(Number(range.max), Number(range.value) + d * stepV * 2)));
           range.dispatchEvent(new Event('input'));
         } else {
-          const btns = [...cur.querySelectorAll<HTMLButtonElement>('.seg button, .swatches button')];
+          const btns = [...cur.querySelectorAll<HTMLButtonElement>('.seg button, .swatches button, .chips button')];
           const on = btns.findIndex((b) => b.classList.contains('on'));
           const n = Math.max(0, Math.min(btns.length - 1, on + d));
           if (n !== on) btns[n].click();
@@ -417,42 +435,127 @@ export class App implements GameUi {
     return s;
   }
 
-  private characterScreen(): Screen {
-    const { s, body } = this.menu('char', 'Charakter', 'Aussehen');
-    const col = el('div', 'col list');
+  private chipsOpt(name: string, labels: string[], value: number, on: (v: number) => void): HTMLElement {
+    const o = el('div', 'opt f chipsopt', `<span class="name">${name}</span><div class="chips"></div>`);
+    const c = o.querySelector('.chips')!;
+    labels.forEach((l, i) => {
+      const b = el('button', i === value ? 'on' : '', esc(l));
+      b.addEventListener('click', () => { c.querySelectorAll('button').forEach((x) => x.classList.remove('on')); b.classList.add('on'); on(i); });
+      c.append(b);
+    });
+    return o;
+  }
+  /** Character editor. In the menu it uses a preview model on the Bürkliplatz, in game the own character. */
+  private characterScreen(inGame = false): Screen {
+    const { s, body, footer } = this.menu('char', 'Charakter', inGame ? 'Aussehen · wird für alle sichtbar' : 'Aussehen');
+    footer.innerHTML = this.hints(['Q E|LB RB', 'Kategorie'], ['↑↓|LS', 'Wählen'], ['← →|LS', 'Ändern'], ['Esc|B', 'Fertig']);
     const a = this.settings.appearance;
-    const apply = () => {
+    const cc = el('div', 'cc');
+    const left = el('div', 'left'), tabs = el('div', 'tabs'), opts = el('div', 'opts'), stage = el('div', 'stage');
+    const label = el('div', 'label shadow', '');
+    stage.append(label);
+    left.append(tabs, opts);
+    cc.append(left, stage);
+    body.append(cc);
+    let pushT: ReturnType<typeof setTimeout> | null = null;
+    const apply = (redraw = false) => {
+      Object.assign(a, sanitizeAppearance(a));
       saveSettings(this.settings);
-      this.setPreview(true);
+      label.innerHTML = `<b>${esc(this.account?.name || this.settings.name || 'Spieler')}</b><span class="caps">${TOP_L[a.top]} · ${LEGS_L[a.legs]} · ${FEET_L[a.feet]}</span>`;
       if (this.game && this.net) {
         this.net.profile.appearance = { ...a };
-        this.net.sendRaw({ t: 'appearance', a });
         this.game.setAppearance();
+        if (pushT) clearTimeout(pushT);
+        pushT = setTimeout(() => this.net?.sendRaw({ t: 'appearance', a: { ...a } }), 250);
+      } else {
+        this.setPreview(true);
+        if (this.net && this.account) this.net.sendRaw({ t: 'appearance', a: { ...a } });
       }
+      if (redraw) draw();
     };
-    const name = el('div', 'field f', `<label class="caps">Name (offline)</label>`);
-    const inp = el('input');
-    inp.type = 'text'; inp.maxLength = 16; inp.value = this.settings.name;
-    inp.addEventListener('input', () => { this.settings.name = inp.value.trim().slice(0, 16); saveSettings(this.settings); });
-    inp.addEventListener('keydown', (e) => e.stopPropagation());
-    name.append(inp);
-    name.addEventListener('click', () => inp.focus());
-    col.append(
-      name,
-      this.swatch('Haut', SKIN, a.skin, (v) => { a.skin = v; apply(); }),
-      this.seg('Frisur', [['0', 'Kurz'], ['1', 'Lang'], ['3', 'Voll'], ['2', 'Glatze']], String(a.hairStyle), (v) => { a.hairStyle = Number(v); apply(); }),
-      this.swatch('Haarfarbe', HAIR, a.hair, (v) => { a.hair = v; apply(); }),
-      this.seg('Kopfbedeckung', [['0', 'Keine'], ['1', 'Cap']], String(a.hat), (v) => { a.hat = Number(v); apply(); }),
-      this.swatch('Jacke', JACKET, a.jacket, (v) => { a.jacket = v; apply(); }),
-      this.swatch('Hose', PANTS, a.pants, (v) => { a.pants = v; apply(); }),
-      this.swatch('Schuhe', SHOES, a.shoes, (v) => { a.shoes = v; apply(); }),
-      this.seg('Statur', [['0', 'Schlank'], ['1', 'Mittel'], ['2', 'Kräftig']], String(a.build), (v) => { a.build = Number(v); apply(); }),
-    );
-    body.append(col);
-    s.onShow = () => this.setPreview(true);
-    s.back = () => { this.setPreview(false); this.pop(); };
+    const names = ['Outfits', 'Oberteil', 'Unterteil', 'Haare & Kopf', 'Accessoires', 'Körper'];
+    let cur = 0;
+    const draw = () => {
+      [...tabs.children].forEach((c, i) => c.classList.toggle('on', i === cur));
+      opts.innerHTML = '';
+      if (cur === 0) {
+        const grid = el('div', 'outfits cards');
+        const card = (title: string, o: Partial<Appearance>, sub: string, del?: () => void) => {
+          const full = { ...a, ...o };
+          const dots = [JACKET[full.jacket], PANTS[full.pants], SHOES[full.shoes]].map((c) => `<i style="background:#${c.toString(16).padStart(6, '0')}"></i>`).join('');
+          const c = el('button', 'card f', `<h3>${esc(title)}</h3><div class="caps">${esc(sub)}</div><div class="dots">${dots}</div>`);
+          c.addEventListener('click', () => { Object.assign(a, o); apply(); });
+          if (del) c.addEventListener('contextmenu', (e) => { e.preventDefault(); del(); });
+          grid.append(c);
+        };
+        for (const pr of OUTFIT_PRESETS) card(pr.name, pr.a, `${TOP_L[pr.a.top!]} · ${FEET_L[pr.a.feet!]}`);
+        this.settings.outfits.forEach((o, i) => card(`Eigenes ${i + 1}`, o, 'Gespeichert · Rechtsklick löscht', () => { this.settings.outfits.splice(i, 1); this.syncOutfits(); draw(); }));
+        const save = el('button', 'btn f', this.settings.outfits.length >= 6 ? 'Speicherplätze voll' : 'Aktuelles Outfit speichern');
+        save.style.cssText = 'margin-top:14px;align-self:flex-start';
+        save.addEventListener('click', () => {
+          if (this.settings.outfits.length >= 6) this.settings.outfits.shift();
+          this.settings.outfits.push({ ...a });
+          this.syncOutfits();
+          this.hud.toast('Outfit gespeichert', 'good');
+          draw();
+        });
+        opts.append(el('p', '', 'Vorlagen behalten Hautfarbe, Frisur und Statur. Eigene Outfits werden mit deinem Konto gespeichert.'), grid, save);
+      } else if (cur === 1) {
+        opts.append(
+          this.chipsOpt('Oberteil', TOP_L, a.top, (v) => { a.top = v; apply(); }),
+          this.swatch('Farbe', JACKET, a.jacket, (v) => { a.jacket = v; apply(); }),
+        );
+      } else if (cur === 2) {
+        opts.append(
+          this.chipsOpt('Hose', LEGS_L, a.legs, (v) => { a.legs = v; apply(); }),
+          this.swatch('Farbe', PANTS, a.pants, (v) => { a.pants = v; apply(); }),
+          this.chipsOpt('Schuhe', FEET_L, a.feet, (v) => { a.feet = v; apply(); }),
+          this.swatch('Schuhfarbe', SHOES, a.shoes, (v) => { a.shoes = v; apply(); }),
+        );
+      } else if (cur === 3) {
+        opts.append(
+          this.chipsOpt('Frisur', HAIR_L, a.hairStyle, (v) => { a.hairStyle = v; apply(); }),
+          this.swatch('Haarfarbe', HAIR, a.hair, (v) => { a.hair = v; apply(); }),
+          this.chipsOpt('Kopfbedeckung', HAT_L, a.hat, (v) => { a.hat = v; apply(); }),
+        );
+      } else if (cur === 4) {
+        opts.append(this.chipsOpt('Accessoire', ACC_L, a.acc, (v) => { a.acc = v; apply(); }), el('p', '', 'Mütze, Cap, Rucksack und Schal übernehmen die Akzentfarbe des Oberteils.'));
+      } else {
+        if (!inGame && !this.account) {
+          const name = el('div', 'field f', `<label class="caps">Name (Einzelspieler)</label>`);
+          const inp = el('input');
+          inp.type = 'text'; inp.maxLength = 16; inp.value = this.settings.name;
+          inp.addEventListener('input', () => { this.settings.name = inp.value.trim().slice(0, 16); saveSettings(this.settings); apply(); });
+          inp.addEventListener('keydown', (e) => e.stopPropagation());
+          name.append(inp);
+          name.addEventListener('click', () => inp.focus());
+          opts.append(name);
+        }
+        opts.append(
+          this.swatch('Haut', SKIN, a.skin, (v) => { a.skin = v; apply(); }),
+          this.chipsOpt('Statur', ['Schlank', 'Mittel', 'Kräftig'], a.build, (v) => { a.build = v; apply(); }),
+        );
+        const rnd = el('button', 'btn ghost f', 'Zufällig');
+        rnd.style.cssText = 'margin-top:14px;align-self:flex-start';
+        rnd.addEventListener('click', () => { Object.assign(a, defaultAppearance(Math.floor(Math.random() * 1e9))); apply(true); });
+        opts.append(rnd);
+      }
+      const first = opts.querySelector('.f');
+      if (first) this.focus(first as HTMLElement, false);
+    };
+    names.forEach((n, i) => { const b = el('button', '', n); b.addEventListener('click', () => { cur = i; draw(); }); tabs.append(b); });
+    s.onShow = () => { this.ccMode = inGame ? 'game' : 'menu'; apply(); draw(); };
+    s.tab = (d) => { cur = (cur + d + names.length) % names.length; this.audio.ui('move'); draw(); };
+    s.back = () => { this.ccMode = null; if (!inGame) this.setPreview(false); this.pop(); };
+    if (inGame) s.el.classList.replace('scrim-left', 'scrim-left');
     return s;
   }
+  private syncOutfits(): void {
+    saveSettings(this.settings);
+    if (this.net) this.net.sendRaw({ t: 'outfits', list: this.settings.outfits });
+  }
+  /** 'menu' = preview model, 'game' = own character, null = no editor open */
+  private ccMode: 'menu' | 'game' | null = null;
   private setPreview(on: boolean): void {
     if (this.preview) { this.engine.scene.remove(this.preview.group); this.preview = null; }
     if (!on || this.game) return;
@@ -461,7 +564,17 @@ export class App implements GameUi {
     this.preview.group.position.set(x, this.world.groundAt(x, z), z);
     this.engine.scene.add(this.preview.group);
   }
-
+  /** Frame a character for the editor: it stands right of the menu column. */
+  private framePreview(x: number, y: number, z: number, yaw: number): void {
+    const cam = this.engine.camera;
+    const sway = Math.sin(this.menuT * 0.35) * 0.35;
+    const fx = Math.sin(yaw + sway), fz = Math.cos(yaw + sway);
+    const rx = -Math.cos(yaw + sway), rz = Math.sin(yaw + sway);
+    const off = window.innerWidth < 760 ? 0 : 0.8;
+    cam.position.set(x + fx * 3.0 + rx * off, y + 1.3, z + fz * 3.0 + rz * off);
+    cam.lookAt(x + rx * off, y + 1.0, z + rz * off);
+    if (cam.fov !== 42) { cam.fov = 42; cam.updateProjectionMatrix(); }
+  }
   private settingsScreen(inGame = false): Screen {
     const { s, body } = this.menu('settings', 'Einstellungen', inGame ? 'Pause' : 'Hauptmenü', inGame ? 'scrim' : 'scrim-left');
     const col = el('div', 'col wide');
@@ -485,6 +598,22 @@ export class App implements GameUi {
       this.seg('Y-Achse', [['0', 'Normal'], ['1', 'Invertiert']], st.invertY ? '1' : '0', (v) => { st.invertY = v === '1'; this.applySettings(); }),
       this.seg('Vibration', [['1', 'Ein'], ['0', 'Aus']], st.vibration ? '1' : '0', (v) => { st.vibration = v === '1'; this.applySettings(); }),
     );
+    // sandbox assist: only meaningful in single player and private sandbox lobbies
+    const as = st.assist;
+    const allowed = !this.game || this.game.assistAllowed;
+    const onOff = (name: string, v: boolean, on: (x: boolean) => void) => this.seg(name, [['1', 'Ein'], ['0', 'Aus']], v ? '1' : '0', (x) => { on(x === '1'); this.assistChanged(); });
+    col.append(
+      head('Sandbox · Aimbot & ESP'),
+      el('p', '', allowed ? 'Nur im Einzelspieler und in privaten Sandbox-Lobbys aktiv. Tasten: Y = Aimbot, U = ESP.' : 'In dieser Lobby deaktiviert – nur im Einzelspieler und in privaten Sandbox-Lobbys verfügbar.'),
+      onOff('Aimbot', as.aimbot && allowed, (x) => { as.aimbot = x && allowed; }),
+      this.slider('Stärke', 1, 5, 1, as.strength, (v) => String(Math.round(v)), (v) => { as.strength = Math.round(v); this.assistChanged(); }),
+      onOff('Auto-Feuer', as.autoFire, (x) => { as.autoFire = x; }),
+      onOff('Nur beim Zielen', as.onlyWhenAiming, (x) => { as.onlyWhenAiming = x; }),
+      onOff('ESP', as.esp && allowed, (x) => { as.esp = x && allowed; }),
+      onOff('Ziel: Spieler', as.tPlayers, (x) => { as.tPlayers = x; }),
+      onOff('Ziel: Polizei', as.tPolice, (x) => { as.tPolice = x; }),
+      onOff('Ziel: Passanten', as.tPeds, (x) => { as.tPeds = x; }),
+    );
     for (const h of col.querySelectorAll('h2')) (h as HTMLElement).style.margin = '18px 0 4px';
     body.append(col);
     return s;
@@ -496,7 +625,7 @@ export class App implements GameUi {
       ['Ducken', 'C', 'Steuerkreuz ↓'], ['Zielen', 'Rechte Maustaste', 'LT'], ['Schiessen', 'Linke Maustaste', 'RT'], ['Schlagen', 'Q', 'B'],
       ['Waffe wechseln', 'X oder 1', 'Steuerkreuz ↑'], ['Ein-/Aussteigen · Interagieren', 'E', 'Y'], ['Gas / Bremse', 'W / S', 'RT / LT'], ['Handbremse', 'Leertaste', 'A oder RB'],
       ['Hupe', 'H', 'L3'], ['Licht / Sirene', 'L / G', 'Steuerkreuz → / ←'], ['Kameraabstand', 'V', 'R3'], ['Karte', 'M', 'Ansicht-Taste'],
-      ['Chat', 'T oder Enter', '—'], ['Pause', 'Esc oder P', 'Menü-Taste'],
+      ['Chat', 'T oder Enter', '—'], ['Pause', 'Esc oder P', 'Menü-Taste'], ['Aimbot / ESP (Sandbox)', 'Y / U', 'Einstellungen'],
     ];
     const dl = el('dl', 'help');
     dl.style.gridTemplateColumns = 'auto auto auto';
@@ -538,6 +667,17 @@ export class App implements GameUi {
     const net = new NetClient(this.world, transport);
     this.dbg.room = transport.room;
     this.startGame(net);
+    this.rememberSession();
+  }
+  /** Remember the running world so a reload / restart rejoins it automatically. */
+  private rememberSession(): void {
+    const online = this.net?.transport.kind === 'online';
+    this.settings.lastSession = { mode: online ? 'online' : 'offline', server: online ? this.serverUrl : '', code: online ? this.lobbyCode : '', at: Date.now() };
+    saveSettings(this.settings);
+  }
+  private saveLocal(): void {
+    if (this.net?.transport instanceof LoopbackTransport) this.net.transport.saveNow();
+    saveSettings(this.settings);
   }
   private startGame(net: NetClient): void {
     this.setPreview(false);
@@ -552,11 +692,16 @@ export class App implements GameUi {
     net.ev.other = (m) => this.onServer(m);
     this.dbg.game = game;
     this.dbg.net = net;
+    game.assistCfg = this.settings.assist;
+    if (!game.assistAllowed) { game.assistCfg.aimbot = false; game.assistCfg.esp = false; }
     this.stack.length = 0;
     this.show(null);
     this.hud.toast('Willkommen in Zürich. Drücke Esc bzw. die Menü-Taste für Karte und Aufträge.', 'info');
   }
   private quitToMenu(): void {
+    this.saveLocal();
+    this.settings.lastSession = null;
+    saveSettings(this.settings);
     if (this.net?.transport.kind === 'online') this.net.sendRaw({ t: 'leaveLobby' });
     this.game?.dispose();
     this.game = null;
@@ -596,7 +741,8 @@ export class App implements GameUi {
     }
     const net = new NetClient(this.world, transport);
     net.ev.other = (m) => this.onServer(m);
-    net.ev.welcome = () => { this.reconnecting = false; this.lobbyCode = net.lobby?.code ?? ''; this.startGame(net); };
+    net.ev.welcome = () => { this.reconnecting = false; this.lobbyCode = net.lobby?.code ?? ''; this.startGame(net); this.rememberSession(); };
+    net.ev.profile = (p) => this.adoptProfile(p);
     net.ev.closed = (r) => this.closed(r);
     this.net = net;
     // the menu loop does not run net.update, so pump nothing here: WebSocket callbacks drive the pre-game flow
@@ -615,10 +761,10 @@ export class App implements GameUi {
           this.settings.token = m.token ?? this.settings.token;
           if (!this.settings.name) this.settings.name = m.account.name;
           saveSettings(this.settings);
-          if (this.reconnecting && this.lobbyCode) this.net?.sendRaw({ t: 'joinLobby', code: this.lobbyCode });
+          if (this.reconnecting && this.lobbyCode) this.net?.sendRaw({ t: 'joinLobby', code: this.lobbyCode, resume: true, appearance: this.settings.appearance });
           else if (!this.game) {
             this.replace(this.onlineScreen());
-            if (this.lobbyCode) this.joinLobby({ code: this.lobbyCode });
+            if (this.lobbyCode) this.joinLobby({ code: this.lobbyCode, resume: this.resuming });
           }
         } else {
           this.settings.token = '';
@@ -631,13 +777,18 @@ export class App implements GameUi {
       case 'social':
         if (m.invites.length) {
           const inv = m.invites[0];
-          this.hud.toast(`${inv.from} lädt dich in die Lobby ${inv.code} ein.`, 'good');
+          this.hud.toast(`${inv.from} lädt dich in die Lobby ${inv.code} ein – Pausenmenü › Lobby › Beitreten.`, 'good');
           this.pendingInvite = inv.code;
+          this.pendingInviteFrom = inv.from;
           this.refreshOnline?.();
         } else { this.friends = m.friends; this.requests = m.requests; this.refreshOnline?.(); }
         break;
+      case 'search': this.searchResults = m.results; this.refreshOnline?.(); break;
       case 'error':
-        if (m.code === 'nolobby' || m.code === 'full') { this.lobbyCode = ''; this.reconnecting = false; }
+        if (m.code === 'nolobby' || m.code === 'full') {
+          this.lobbyCode = ''; this.reconnecting = false;
+          if (this.settings.lastSession?.mode === 'online') { this.settings.lastSession = null; saveSettings(this.settings); }
+        }
         this.hud.toast(m.text, 'bad');
         this.authMsg?.(m.text);
         if (this.screen?.el.id === 'connecting') this.replace(this.onlineScreen());
@@ -646,11 +797,41 @@ export class App implements GameUi {
     }
   }
   private pendingInvite = '';
-  private joinLobby(opts: { code?: string; create?: { private: boolean; name?: string }; quick?: boolean }): void {
+  private pendingInviteFrom = '';
+  private resuming = false;
+  private searchResults: { id: string; name: string; online: boolean; friend: boolean; pending: boolean }[] = [];
+  private joinLobby(opts: { code?: string; create?: { private: boolean; name?: string; sandbox?: boolean }; quick?: boolean; resume?: boolean }): void {
     if (!this.net) return;
     this.audio.unlock();
     this.net.sendRaw({ t: 'joinLobby', ...opts, appearance: this.settings.appearance });
-    this.show(this.connectingScreen('Lobby wird betreten …'), true);
+    this.show(this.connectingScreen(opts.resume ? 'Letzte Spielwelt wird betreten …' : 'Lobby wird betreten …'), true);
+  }
+  /** Server profile after login: account appearance, outfits and synced settings win over local copies. */
+  private adoptProfile(p: Profile): void {
+    if (p.appearance) Object.assign(this.settings.appearance, sanitizeAppearance(p.appearance));
+    if (p.outfits && p.outfits.length) this.settings.outfits = p.outfits.map((o) => sanitizeAppearance(o));
+    else if (this.settings.outfits.length) this.net?.sendRaw({ t: 'outfits', list: this.settings.outfits });
+    const ss = p.settings as Record<string, unknown> | undefined;
+    if (ss && !this.game) {
+      const st = this.settings as unknown as Record<string, unknown>;
+      for (const k of SYNCED_KEYS) if (k in ss && typeof ss[k] === typeof st[k]) st[k] = ss[k];
+      for (const k of Object.keys(this.settings.assist)) if ('a_' + k in ss) (this.settings.assist as unknown as Record<string, unknown>)[k] = ss['a_' + k];
+      this.applySettings(false);
+      if (this.settings.quality !== 'auto') this.setQuality(this.settings.quality);
+    }
+    this.refreshOnline?.();
+  }
+  private pushSettingsT: ReturnType<typeof setTimeout> | null = null;
+  private pushSettings(): void {
+    if (!this.net || this.net.transport.kind !== 'online' || !this.account) return;
+    if (this.pushSettingsT) clearTimeout(this.pushSettingsT);
+    this.pushSettingsT = setTimeout(() => {
+      const st = this.settings as unknown as Record<string, number | boolean | string>;
+      const out: Record<string, number | boolean | string> = {};
+      for (const k of SYNCED_KEYS) out[k] = st[k];
+      for (const [k, v] of Object.entries(this.settings.assist)) out['a_' + k] = v;
+      this.net?.sendRaw({ t: 'settings', s: out });
+    }, 600);
   }
   private connectingScreen(text: string): Screen {
     const root = el('div', 'screen menu scrim');
@@ -726,10 +907,11 @@ export class App implements GameUi {
     list.append(
       this.item('01', 'Schnellspiel', () => this.joinLobby({ quick: true }), { right: 'Öffentlich', start: true }),
       this.item('02', 'Private Lobby erstellen', () => this.joinLobby({ create: { private: true } }), { right: 'Nur mit Code' }),
-      this.item('03', 'Öffentliche Lobby erstellen', () => this.joinLobby({ create: { private: false } })),
+      this.item('03', 'Private Sandbox-Lobby', () => this.joinLobby({ create: { private: true, sandbox: true, name: `${this.account?.name ?? ''}s Sandbox` } }), { right: 'Aimbot & ESP erlaubt' }),
+      this.item('04', 'Öffentliche Lobby erstellen', () => this.joinLobby({ create: { private: false } })),
       codeField,
-      this.item('04', 'Mit Code beitreten', () => { if (code.value.trim().length === 5) this.joinLobby({ code: code.value.trim().toUpperCase() }); else code.focus(); }),
-      this.item('05', 'Abmelden', () => { this.settings.token = ''; saveSettings(this.settings); this.account = null; this.net?.transport.close(); this.net = null; this.stack.length = 0; this.show(this.mainMenu()); }, { small: true }),
+      this.item('05', 'Mit Code beitreten', () => { if (code.value.trim().length === 5) this.joinLobby({ code: code.value.trim().toUpperCase() }); else code.focus(); }),
+      this.item('06', 'Abmelden', () => { this.settings.token = ''; saveSettings(this.settings); this.account = null; this.net?.transport.close(); this.net = null; this.stack.length = 0; this.show(this.mainMenu()); }, { small: true }),
     );
     const render = () => {
       right.innerHTML = '';
@@ -771,40 +953,79 @@ export class App implements GameUi {
       box.append(el('p', '', 'Die Freundesliste ist im Online-Modus verfügbar.'));
       return box;
     }
+    const net = this.net;
+    // own id (for others to search)
+    const idl = el('div', 'idline caps', `Deine Spieler-ID <code>#${esc(this.account.id)}</code>`);
+    const copy = el('button', 'mini f', 'Kopieren');
+    copy.addEventListener('click', () => { navigator.clipboard?.writeText('#' + this.account!.id).then(() => this.hud.toast('ID kopiert', 'info')).catch(() => {}); });
+    idl.append(copy);
+    box.append(idl);
+    // search by name or #id
     const add = el('div', 'row');
     const inp = el('input', 'f');
-    inp.type = 'text'; inp.maxLength = 16; inp.placeholder = 'Spielername';
-    inp.style.cssText = 'background:transparent;border:0;border-bottom:1px solid var(--dim);padding:6px 0;outline:none;user-select:text;-webkit-user-select:text';
-    const send = () => { if (inp.value.trim()) { this.net?.sendRaw({ t: 'friend', op: 'add', name: inp.value.trim() }); inp.value = ''; } };
-    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.code === 'Enter') send(); });
-    const b = el('button', 'mini f', 'Anfrage senden');
-    b.addEventListener('click', send);
+    inp.type = 'text'; inp.maxLength = 24; inp.placeholder = 'Name oder #ID'; inp.value = this.searchQuery;
+    inp.style.cssText = 'background:transparent;border:0;border-bottom:1px solid var(--dim);padding:6px 0;outline:none;user-select:text;-webkit-user-select:text;min-width:200px';
+    const search = () => { this.searchQuery = inp.value.trim(); if (this.searchQuery.length >= 2) net.sendRaw({ t: 'friend', op: 'search', name: this.searchQuery }); };
+    inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.code === 'Enter') search(); });
+    const b = el('button', 'mini f', 'Suchen');
+    b.addEventListener('click', search);
     add.append(inp, b);
     box.append(add);
+    if (this.searchQuery && this.searchResults.length + 1) {
+      const rl = el('div', 'plist');
+      rl.style.marginTop = '8px';
+      if (!this.searchResults.length) rl.innerHTML = `<div class="p" style="color:var(--dim)">Keine Spieler gefunden.</div>`;
+      for (const r of this.searchResults) {
+        const row = el('div', 'p', `<span class="dot${r.online ? ' on' : ''}"></span><b>${esc(r.name)}</b><span class="num" style="color:var(--faint)">#${esc(r.id)}</span><span class="sp"></span>`);
+        const sp = row.querySelector('.sp')!;
+        if (r.friend) sp.append(el('span', 'caps', 'Freund'));
+        else if (r.pending) sp.append(el('span', 'caps', 'Angefragt'));
+        else {
+          const ab = el('button', 'mini f', 'Anfrage senden');
+          ab.addEventListener('click', () => { net.sendRaw({ t: 'friend', op: 'add', id: r.id }); r.pending = true; this.refreshOnline?.(); });
+          sp.append(ab);
+        }
+        rl.append(row);
+      }
+      box.append(rl);
+    }
     const pl = el('div', 'plist');
-    pl.style.marginTop = '10px';
+    pl.style.marginTop = '12px';
+    if (this.pendingInvite) {
+      const row = el('div', 'p', `<span class="dot on"></span><b>${esc(this.pendingInviteFrom || 'Ein Freund')}</b><span style="color:var(--dim)">lädt dich in Lobby ${esc(this.pendingInvite)} ein</span><span class="sp"></span>`);
+      const j = el('button', 'mini f', 'Beitreten');
+      j.addEventListener('click', () => { const c = this.pendingInvite; this.pendingInvite = ''; this.joinLobby({ code: c }); });
+      const n = el('button', 'mini f', 'Ignorieren');
+      n.addEventListener('click', () => { this.pendingInvite = ''; this.refreshOnline?.(); });
+      row.querySelector('.sp')!.append(j, n);
+      pl.append(row);
+    }
     for (const r of this.requests) {
       const row = el('div', 'p', `<span class="dot"></span><b>${esc(r.name)}</b><span style="color:var(--dim)">möchte befreundet sein</span><span class="sp"></span>`);
       const y = el('button', 'mini f', 'Annehmen'), n = el('button', 'mini f', 'Ablehnen');
-      y.addEventListener('click', () => this.net?.sendRaw({ t: 'friend', op: 'accept', id: r.id }));
-      n.addEventListener('click', () => this.net?.sendRaw({ t: 'friend', op: 'decline', id: r.id }));
+      y.addEventListener('click', () => net.sendRaw({ t: 'friend', op: 'accept', id: r.id }));
+      n.addEventListener('click', () => net.sendRaw({ t: 'friend', op: 'decline', id: r.id }));
       row.querySelector('.sp')!.append(y, n);
       pl.append(row);
     }
-    for (const f of this.friends) {
-      const row = el('div', 'p', `<span class="dot${f.online ? ' on' : ''}"></span><b>${esc(f.name)}</b><span style="color:var(--dim)">${f.online ? (f.lobby ? `in Lobby ${esc(f.lobby)}` : 'online') : 'offline'}</span><span class="sp"></span>`);
+    const sorted = [...this.friends].sort((x, y) => Number(y.online) - Number(x.online) || x.name.localeCompare(y.name));
+    for (const f of sorted) {
+      const here = f.lobby && f.lobby === net.lobby?.code && !!this.game;
+      const status = f.online ? (here ? 'in deiner Lobby' : f.lobby ? `spielt · Lobby ${esc(f.lobby)}` : 'online im Menü') : 'offline';
+      const row = el('div', 'p', `<span class="dot${f.online ? ' on' : ''}"></span><b>${esc(f.name)}</b><span style="color:var(--dim)">${status}</span><span class="sp"></span>`);
       const sp = row.querySelector('.sp')!;
-      if (inGame && f.online) { const i = el('button', 'mini f', 'Einladen'); i.addEventListener('click', () => this.net?.sendRaw({ t: 'friend', op: 'invite', id: f.id })); sp.append(i); }
-      if (!inGame && f.lobby) { const j = el('button', 'mini f', 'Beitreten'); j.addEventListener('click', () => this.joinLobby({ code: f.lobby })); sp.append(j); }
+      if (f.lobby && !here) { const j = el('button', 'mini f', 'Beitreten'); j.addEventListener('click', () => this.joinLobby({ code: f.lobby })); sp.append(j); }
+      if (inGame && f.online && !here) { const i = el('button', 'mini f', 'Einladen'); i.addEventListener('click', () => net.sendRaw({ t: 'friend', op: 'invite', id: f.id })); sp.append(i); }
       const x = el('button', 'mini f', 'Entfernen');
-      x.addEventListener('click', () => this.net?.sendRaw({ t: 'friend', op: 'remove', id: f.id }));
+      x.addEventListener('click', () => net.sendRaw({ t: 'friend', op: 'remove', id: f.id }));
       sp.append(x);
       pl.append(row);
     }
-    if (!this.friends.length && !this.requests.length) pl.innerHTML = `<div class="p" style="color:var(--dim)">Noch keine Freunde – sende eine Anfrage über den Spielernamen.</div>`;
+    if (!this.friends.length && !this.requests.length && !this.pendingInvite) pl.innerHTML = `<div class="p" style="color:var(--dim)">Noch keine Freunde – suche nach Name oder Spieler-ID.</div>`;
     box.append(pl);
     return box;
   }
+  private searchQuery = '';
 
   // ================================================================= in-game screens
   private openPause(tab = 0): void {
@@ -829,7 +1050,7 @@ export class App implements GameUi {
         list.append(
           this.item('01', 'Weiterspielen', () => this.show(null), { start: true }),
           this.item('02', 'Karte', () => { this.show(null); this.openMap(); }),
-          this.item('03', 'Charakter', () => this.show(this.characterInGame(), true)),
+          this.item('03', 'Charakter', () => this.show(this.characterScreen(true), true)),
           this.item('04', 'Einstellungen', () => this.show(this.settingsScreen(true), true)),
           this.item('05', 'Steuerung', () => this.show(this.controlsScreen(true), true)),
           this.item('06', online ? 'Lobby verlassen' : 'Zum Hauptmenü', () => this.quitToMenu()),
@@ -896,14 +1117,6 @@ export class App implements GameUi {
     s.onShow = draw;
     s.tab = (d) => { cur = (cur + d + names.length) % names.length; this.audio.ui('move'); draw(); };
     s.back = () => { this.refreshOnline = null; this.show(null); };
-    return s;
-  }
-  private characterInGame(): Screen {
-    const s = this.characterScreen();
-    s.el.classList.remove('scrim-left');
-    s.el.classList.add('scrim');
-    s.onShow = undefined;
-    s.back = () => this.pop();
     return s;
   }
   private dealerScreen(): Screen {
@@ -1008,6 +1221,18 @@ export class App implements GameUi {
   }
   roster(): void {
     this.refreshOnline?.();
+  }
+  welcome(): void {
+    // lobby switch inside a running game (friend join / invitation)
+    this.reconnecting = false;
+    this.lobbyCode = this.net?.lobby?.code ?? this.lobbyCode;
+    this.rememberSession();
+    if (this.screen?.el.id === 'connecting' || this.screen?.el.id === 'pause') { this.stack.length = 0; this.show(null); }
+    if (this.net?.lobby?.sandbox) this.hud.toast('Sandbox-Lobby: Aimbot (Y) und ESP (U) sind erlaubt.', 'info');
+  }
+  assistChanged(): void {
+    saveSettings(this.settings);
+    this.pushSettings();
   }
   profile(_p: Profile): void {
     this.refreshOnline?.();

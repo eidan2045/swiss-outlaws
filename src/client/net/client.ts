@@ -33,7 +33,7 @@ export class LoopbackTransport implements Transport {
   loss = 0;
 
   constructor(world: World, profile: Profile, private saveProfile: (p: Profile) => void) {
-    this.room = new GameRoom(world, { code: 'LOKAL', name: 'Einzelspieler', private: true, maxPlayers: 1, seed: (Date.now() & 0xffff) + 7, saveProfile: (_id, p) => this.saveProfile(p) });
+    this.room = new GameRoom(world, { code: 'LOKAL', name: 'Einzelspieler', private: true, sandbox: true, maxPlayers: 1, seed: (Date.now() & 0xffff) + 7, saveProfile: (_id, p) => this.saveProfile(p) });
     const pl = this.room.addPlayer('local', profile, (m) => this.deliver(() => this.onMessage(m), m instanceof ArrayBuffer));
     this.playerId = pl.id;
   }
@@ -49,9 +49,10 @@ export class LoopbackTransport implements Transport {
         if (r.u8() === Pkt.Input) this.room.handleInputs(this.playerId, decodeInputs(r));
       } else if (data.t === 'cmd') this.room.handleCommand(this.playerId, data.c);
       else if (data.t === 'ping') this.onMessage({ t: 'pong', c: data.c, s: this.room.tick });
-      else if (data.t === 'appearance') {
+      else if (data.t === 'appearance') this.room.setAppearance(this.playerId, data.a);
+      else if (data.t === 'outfits') {
         const p = this.room.players.get(this.playerId);
-        if (p) { p.profile.appearance = data.a; this.room.save(p); }
+        if (p) { p.profile.outfits = data.list.slice(0, 6); this.room.save(p); }
       }
     };
     if (this.lag <= 0 && this.jitter <= 0) handle();
@@ -72,6 +73,9 @@ export class LoopbackTransport implements Transport {
     }
   }
   close(): void {
+    this.saveNow();
+  }
+  saveNow(): void {
     const p = this.room.players.get(this.playerId);
     if (p) this.room.save(p);
   }

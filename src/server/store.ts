@@ -29,14 +29,22 @@ export class Store {
   private dirty = false;
   private file: string;
   reports: { at: number; by: string; target: string; reason: string }[] = [];
+  /** lobby metadata so a lobby code survives server restarts (recreated on demand) */
+  lobbies: Record<string, { name: string; private: boolean; sandbox: boolean; owner: string; last: number }> = {};
 
   constructor(dir: string) {
     fs.mkdirSync(dir, { recursive: true });
     this.file = path.join(dir, 'accounts.json');
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.file, 'utf8')) as { accounts: Account[] };
-      for (const a of raw.accounts) this.index(a);
-    } catch { /* first start */ }
+    // fall back to the backup when the main file is missing or damaged
+    for (const f of [this.file, this.file + '.bak']) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(f, 'utf8')) as { accounts: Account[]; lobbies?: Store['lobbies'] };
+        for (const a of raw.accounts) this.index(a);
+        this.lobbies = raw.lobbies ?? {};
+        if (f !== this.file) console.warn('[store] restored from backup');
+        break;
+      } catch { /* next */ }
+    }
     setInterval(() => this.flush(), 5000).unref();
   }
   private index(a: Account): void {
@@ -49,7 +57,13 @@ export class Store {
     this.dirty = false;
     const tmp = this.file + '.tmp';
     try {
-      fs.writeFileSync(tmp, JSON.stringify({ accounts: [...this.accounts.values()] }));
+      const now = Date.now();
+      for (const [k, l] of Object.entries(this.lobbies)) if (now - l.last > 3 * 86400000) delete this.lobbies[k];
+      fs.writeFileSync(tmp, JSON.stringify({ accounts: [...this.accounts.values()], lobbies: this.lobbies }));
+      const fd = fs.openSync(tmp, 'r+');
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      if (fs.existsSync(this.file)) fs.copyFileSync(this.file, this.file + '.bak');
       fs.renameSync(tmp, this.file);
     } catch (e) {
       console.error('[store] write failed', e);
@@ -108,6 +122,9 @@ export class Store {
     while (!n || this.byName.has(n.toLowerCase())) n = 'Gast-' + Math.floor(1000 + Math.random() * 9000);
     const a = this.create(n, true);
     return { ok: true, account: a, token: this.issueToken(a) };
+  }
+  all(): IterableIterator<Account> {
+    return this.accounts.values();
   }
   byTokenValue(token: string): Account | undefined {
     if (typeof token !== 'string' || token.length !== 64) return undefined;

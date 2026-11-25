@@ -16,6 +16,7 @@ import { GameCamera } from './camera';
 import { CharAnimState, CharacterModel } from './entities/charactermodel';
 import { VehicleModel } from './entities/vehiclemodel';
 import { Effects } from './effects';
+import { Assist, AssistSettings, defaultAssist } from './assist';
 
 export interface HudState {
   ready: boolean;
@@ -48,6 +49,8 @@ export interface HudState {
   xpCur: number;
   xpNeed: number;
   dead: boolean;
+  /** sandbox assist indicator text ('' = off) */
+  assist: string;
   device: 'kbm' | 'pad';
   players: { id: number; name: string; x: number; z: number; yaw: number }[];
   blips: { x: number; z: number; kind: number }[];
@@ -64,6 +67,8 @@ export interface GameUi {
   roster(): void;
   profile(p: Profile): void;
   closed(reason: string): void;
+  welcome?(): void;
+  assistChanged?(): void;
 }
 export interface GameAudio {
   frame(s: AudioState): void;
@@ -113,6 +118,9 @@ export class Game {
   private wasInVehicle = false;
   private audioVehicles: AudioVehicle[] = [];
   paused = false;
+  readonly assist: Assist;
+  assistCfg: AssistSettings = { ...defaultAssist };
+  private looks = new Map<number, number>();
   /** free camera for photo / debug */
   ui: GameUi | null = null;
   audio: GameAudio | null = null;
@@ -121,16 +129,19 @@ export class Game {
   constructor(readonly engine: Engine, readonly world: World, readonly view: WorldView, readonly net: NetClient, readonly input: Input) {
     this.cam = new GameCamera(engine.camera, world);
     this.effects = new Effects(world);
+    this.assist = new Assist(world);
     engine.scene.add(this.effects.group);
     this.me = new CharacterModel(net.profile.appearance);
     this.me.onStep = (left) => this.audio?.step(left, this.world.surfaceAt(this.net.rx, this.net.rz), (this.net.char.flags & CF.SPRINT) !== 0 || this.anim.speed > 3, this.net.weather.rain > 0.3);
     engine.scene.add(this.me.group);
-    this.hud = { ready: false, speedKmh: 0, gear: 1, rpm: 0, inVehicle: false, driving: false, vehicleName: '', vehicleHp: 1, hp: 100, stamina: 1, wanted: 0, money: 0, ammo: 0, weapon: 1, aiming: false, hours: 10, zone: '', street: '', x: 0, z: 0, yaw: 0, camYaw: 0, mission: null, prompt: '', fps: 60, ping: 0, level: 1, xpCur: 0, xpNeed: 500, dead: false, device: 'kbm', players: [], blips: [], online: net.transport.kind === 'online', nearActivity: null, speedLimit: 0 };
+    this.hud = { ready: false, speedKmh: 0, gear: 1, rpm: 0, inVehicle: false, driving: false, vehicleName: '', vehicleHp: 1, hp: 100, stamina: 1, wanted: 0, money: 0, ammo: 0, weapon: 1, aiming: false, hours: 10, zone: '', street: '', x: 0, z: 0, yaw: 0, camYaw: 0, mission: null, prompt: '', fps: 60, ping: 0, level: 1, xpCur: 0, xpNeed: 500, dead: false, assist: '', device: 'kbm', players: [], blips: [], online: net.transport.kind === 'online', nearActivity: null, speedLimit: 0 };
 
     const ev = net.ev;
     ev.welcome = () => {
       this.rebuildMe();
-      this.cam.snapBehind(Math.PI);
+      this.cam.snapBehind(net.char.yaw || Math.PI);
+      if (!this.assistAllowed) { this.assistCfg.aimbot = false; this.assistCfg.esp = false; }
+      this.ui?.welcome?.();
     };
     ev.chat = (n, t, s, f) => this.ui?.chat(n, t, s, f);
     ev.toast = (t, k) => { this.ui?.toast(t, k); if (k === 'money') this.audio?.ui('cash'); else if (k === 'bad') this.audio?.ui('fail'); };
@@ -170,6 +181,11 @@ export class Game {
     this.rebuildMe();
   }
 
+  /** Aim assist / ESP are only available in single player and private sandbox lobbies. */
+  get assistAllowed(): boolean {
+    return this.net.transport.kind === 'local' || !!this.net.lobby?.sandbox;
+  }
+
   private sample = (out: InputCmd): void => {
     const inp = this.input, net = this.net;
     let b = 0;
@@ -188,6 +204,8 @@ export class Game {
       if (inp.crouch) b |= BTN.CROUCH;
       if (inp.aim) b |= BTN.AIM;
       if (inp.fire && inp.aim) b |= BTN.FIRE;
+      if (this.assist.wantAim) b |= BTN.AIM;
+      if (this.assist.wantFire) b |= BTN.AIM | BTN.FIRE;
       if (inp.walk) b |= BTN.WALK;
       if (this.meleeLatch > 0) { b |= BTN.MELEE; this.meleeLatch--; }
     }
@@ -243,8 +261,27 @@ export class Game {
       if (input.meleePressed && !net.inVehicle && !(input.aim && net.weapon === 1)) this.meleeLatch = 2;
       if (input.camPressed) this.cam.zoomLevel = (this.cam.zoomLevel + 1) % 3;
     }
+    // sandbox aim assist + ESP toggles
+    if (!this.paused && !input.uiMode && (input.assistPressed || input.espPressed)) {
+      if (!this.assistAllowed) this.ui?.toast('Aimbot und ESP gibt es nur im Einzelspieler und in privaten Sandbox-Lobbys.', 'bad');
+      else {
+        if (input.assistPressed) { this.assistCfg.aimbot = !this.assistCfg.aimbot; this.ui?.toast(`Aimbot ${this.assistCfg.aimbot ? `an (Stärke ${this.assistCfg.strength})` : 'aus'}`, 'info'); }
+        if (input.espPressed) { this.assistCfg.esp = !this.assistCfg.esp; this.ui?.toast(`ESP ${this.assistCfg.esp ? 'an' : 'aus'}`, 'info'); }
+        this.ui?.assistChanged?.();
+      }
+    }
+    if (this.assistAllowed && net.ready && !this.paused) {
+      const r = this.assist.update(dt, net, this.assistCfg, engine.camera.position, this.cam.yaw, this.cam.pitch, input.aim);
+      this.cam.yaw = r.yaw;
+      this.cam.pitch = r.pitch;
+    } else this.assist.target = null;
     // aim direction: from the character towards the point under the crosshair
-    {
+    if (this.assist.target) {
+      const t = this.assist.target;
+      const dx = t.x - net.rx, dy = t.y - (net.ry + 1.48), dz = t.z - net.rz;
+      this.aimYaw = Math.atan2(dx, dz);
+      this.aimPitch = Math.atan2(dy, Math.hypot(dx, dz));
+    } else {
       const f = this.cam.forward;
       const cp = engine.camera.position;
       const px = cp.x + f.x * 70, py = cp.y + f.y * 70, pz = cp.z + f.z * 70;
@@ -333,17 +370,21 @@ export class Game {
     }
 
     // ---- remote players
+    const espOn = this.assistCfg.esp && this.assistAllowed;
     const seenP = new Set<number>();
     const ra = _ra;
     for (const [id, r] of net.players) {
       seenP.add(id);
       let m = this.chars.get(id);
+      const info = net.roster.get(id);
+      if (m && info && this.looks.get(id) !== info.look) { engine.scene.remove(m.group); m = undefined; }
       if (!m) {
-        const info = net.roster.get(id);
         m = new CharacterModel(info ? unpackAppearance(info.look) : defaultAppearance(id));
+        this.looks.set(id, info?.look ?? -1);
         this.chars.set(id, m);
         engine.scene.add(m.group);
       }
+      m.setOutline(espOn && this.assistCfg.tPlayers);
       const d = r.data;
       m.group.visible = d.veh === 0;
       if (!m.group.visible) continue;
@@ -357,7 +398,7 @@ export class Game {
       ra.melee = d.anim & 1 ? 0.4 : 0; ra.fired = (d.anim & 2) !== 0; ra.armed = (d.anim & 4) !== 0; ra.sprint = (d.flags & CF.SPRINT) !== 0; ra.cower = false;
       m.update(dt, ra, r.x, r.y, r.z, r.yaw);
     }
-    for (const [id, m] of this.chars) if (!seenP.has(id)) { engine.scene.remove(m.group); this.chars.delete(id); }
+    for (const [id, m] of this.chars) if (!seenP.has(id)) { engine.scene.remove(m.group); this.chars.delete(id); this.looks.delete(id); }
 
     // ---- NPCs
     const seenN = new Set<number>();
@@ -370,6 +411,7 @@ export class Game {
         this.npcModels.set(id, m);
         engine.scene.add(m.group);
       }
+      m.setOutline(espOn && d.state !== NPC.DEAD && (d.kind === 1 ? this.assistCfg.tPolice : this.assistCfg.tPeds));
       ra.speed = d.state === NPC.KNOCKED ? r.speed : d.speed;
       ra.moveZ = 1; ra.moveX = 0;
       ra.grounded = true; ra.crouch = false; ra.swim = false; ra.aim = d.state === NPC.AIM; ra.aimPitch = 0; ra.vy = 0;
@@ -414,6 +456,7 @@ export class Game {
     h.hp = c.hp; h.stamina = c.stamina; h.wanted = net.wanted; h.money = net.money; h.ammo = net.ammo; h.weapon = net.weapon; h.aiming = a.aim && !inVeh;
     h.hours = this.hoursSmooth; h.x = net.rx; h.z = net.rz; h.yaw = net.ryaw; h.camYaw = this.cam.yaw; h.mission = net.mission; h.fps = this.fps; h.ping = net.rtt;
     h.dead = c.mode === CharMode.Dead; h.device = input.device;
+    h.assist = this.assistAllowed ? [this.assistCfg.aimbot ? `AIMBOT ${this.assistCfg.strength}${this.assistCfg.autoFire ? ' · AUTO' : ''}${this.assist.target ? ' · ZIEL' : ''}` : '', this.assistCfg.esp ? 'ESP' : ''].filter(Boolean).join('  ·  ') : '';
     this.hudT -= dt;
     if (this.hudT <= 0) {
       this.hudT = 0.12;
@@ -430,6 +473,14 @@ export class Game {
       this.context();
     }
     this.ui?.frame(h);
+  }
+
+  /** Pose the own character for the character editor (idle pose, visible even inside a vehicle). */
+  previewMe(dt: number): { x: number; y: number; z: number; yaw: number } {
+    const n = this.net;
+    this.me.group.visible = true;
+    this.me.update(dt, PREVIEW_IDLE, n.rx, n.ry, n.rz, n.ryaw, (x, z) => this.world.groundAt(x, z, n.ry + 1));
+    return { x: n.rx, y: n.ry, z: n.rz, yaw: n.ryaw };
   }
 
   /** Head position of another player in screen space (name tags). */
@@ -461,3 +512,4 @@ export class Game {
 }
 const _ra: CharAnimState = { speed: 0, moveX: 0, moveZ: 1, grounded: true, crouch: false, swim: false, aim: false, aimPitch: 0, vy: 0, mode: 0, melee: 0, fired: false, armed: false, sprint: false };
 const _as: AudioState = { cam: new THREE.Vector3(), forward: new THREE.Vector3(), vehicles: [], rain: 0, wind: 0, hours: 12, zone: 0, tunnel: false, swim: false, speed: 0, inVehicle: false, night: 0, wanted: 0 };
+const PREVIEW_IDLE: CharAnimState = { speed: 0, moveX: 0, moveZ: 1, grounded: true, crouch: false, swim: false, aim: false, aimPitch: 0, vy: 0, mode: 0, melee: 0, fired: false, armed: false, sprint: false };

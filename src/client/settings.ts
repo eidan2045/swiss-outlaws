@@ -1,6 +1,7 @@
 // Persistent client settings and the offline profile (localStorage; everything degrades gracefully without storage).
-import { Appearance, Profile, defaultAppearance, newProfile } from '../shared/net/protocol';
+import { Appearance, Profile, defaultAppearance, newProfile, sanitizeAppearance } from '../shared/net/protocol';
 import type { QualityName } from './render/globals';
+import { AssistSettings, defaultAssist } from './assist';
 
 export interface Settings {
   quality: QualityName | 'auto';
@@ -20,7 +21,13 @@ export interface Settings {
   appearance: Appearance;
   blocked: string[];
   density: number;
+  assist: AssistSettings;
+  outfits: Appearance[];
+  /** the world to rejoin after a reload / restart (cleared when leaving via the menu) */
+  lastSession: { mode: 'offline' | 'online'; server: string; code: string; at: number } | null;
 }
+/** settings that follow the account to other devices */
+export const SYNCED_KEYS = ['quality', 'resScale', 'master', 'music', 'sfx', 'mouseSens', 'padSens', 'deadzone', 'invertY', 'vibration', 'showFps'] as const;
 const KEY = 'swiss-outlaws.settings.v1', PKEY = 'swiss-outlaws.profile.v1';
 
 function store(): Storage | null {
@@ -33,10 +40,15 @@ function store(): Storage | null {
   }
 }
 export function loadSettings(): Settings {
-  const def: Settings = { quality: 'auto', resScale: 1, master: 0.8, music: 0.5, sfx: 0.9, mouseSens: 1, padSens: 1, deadzone: 0.16, invertY: false, vibration: true, showFps: false, serverUrl: '', name: '', token: '', appearance: defaultAppearance(Math.floor(Math.random() * 1e6)), blocked: [], density: 1 };
+  const def: Settings = { quality: 'auto', resScale: 1, master: 0.8, music: 0.5, sfx: 0.9, mouseSens: 1, padSens: 1, deadzone: 0.16, invertY: false, vibration: true, showFps: false, serverUrl: '', name: '', token: '', appearance: defaultAppearance(Math.floor(Math.random() * 1e6)), blocked: [], density: 1, assist: { ...defaultAssist }, outfits: [], lastSession: null };
   try {
     const raw = store()?.getItem(KEY);
-    if (raw) Object.assign(def, JSON.parse(raw));
+    if (raw) {
+      const saved = JSON.parse(raw);
+      Object.assign(def, saved);
+      def.assist = { ...defaultAssist, ...(saved.assist ?? {}) };
+      def.appearance = sanitizeAppearance(def.appearance);
+    }
   } catch { /* corrupt → defaults */ }
   return def;
 }

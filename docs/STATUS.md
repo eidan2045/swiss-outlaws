@@ -22,6 +22,14 @@ Dieses Dokument ist die Übergabe für die nächste Entwicklungs-Session: was ex
 
 **UI/Audio**: Titel, Hauptmenü, Charakter-Editor, Online/Lobby/Freunde, HUD (Minimap mit GPS-Route, Leben, Ausdauer, Geld, Fahndung, Tacho, Missionsanzeige), Weltkarte mit Wegpunkten, Pausenmenü, Händler, Einstellungen; durchgehend mit Controller bedienbar. Audio vollständig synthetisiert (Motoren, Reifen, Hupe, Zweiklang-Sirene, Ambiente je Zone/Wetter, Schritte je Untergrund, Tunnelhall, generative Musik).
 
+## Erweiterung 2 (Sandbox, Persistenz, Outfits, Freunde)
+
+- Sandbox-Aimbot (Y, Stärke 1–5, Auto-Feuer, nur beim Zielen) und ESP (U, rote Umrisse durch Wände), getrennt konfigurierbar; nur Einzelspieler und private Sandbox-Lobbys. Grenze: Die Zielhilfe läuft im Client – der Server prüft das nur indirekt (Flag nur für private Lobbys). Ein manipulierter Client könnte sie in öffentlichen Lobbys trotzdem nachbauen.
+- Persistenz: Position, Munition/Waffe, Outfits, synchronisierte Einstellungen im Konto; Lobby-Metadaten überleben Server-Neustarts (gleicher Code); Speicherdatei mit fsync und `.bak`-Sicherung. Auto-Rejoin nach Reload/Neustart online und offline.
+- Charakter: 5 Oberteile, 3 Hosen, 3 Schuhe, 7 Frisuren, 3 Kopfbedeckungen, 4 Accessoires, 6 Outfit-Vorlagen, 6 eigene Outfit-Plätze; Änderungen sind live für alle sichtbar (vorher wurden sie im Spiel nicht übernommen – Fehler behoben).
+- Freunde: Suche nach Name oder Spieler-ID, Join-Button (auch in private Lobbys von Freunden), Einladungen im Spiel annehmbar.
+- Tests: `tests/integration/persistence.test.ts` (Server-Neustart), `tests/e2e/features.cjs` (15/15, Ergebnis in `docs/test-results/e2e-features.json`).
+
 ## Tatsächlich durchgeführte Tests
 
 | Test | Ergebnis |

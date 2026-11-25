@@ -23,6 +23,7 @@ Ohne Installation: `standalone/index.html` herunterladen und im Browser öffnen 
 | `npm start` | Server starten (liefert zusätzlich `dist/` aus) |
 | `npm test` | Unit- und Server-Integrationstests (Vitest) |
 | `npm run test:e2e` | Browser-Multiplayer-Test mit 4 Sessions, Latenz und Verbindungsabbruch (benötigt Playwright + Chromium) |
+| `node tests/e2e/features.cjs` | Browser-Test: Sandbox-Aimbot/ESP, Outfit-Sync, Freunde (ID-Suche, Beitreten, Einladen), Auto-Rejoin |
 | `npm run map` | Debug-Karte der generierten Welt als PNG |
 
 ## Steuerung
@@ -37,8 +38,13 @@ Ohne Installation: `standalone/index.html` herunterladen und im Browser öffnen 
 | Gas · Bremse · Handbremse | W · S · Leertaste | RT · LT · A/RB |
 | Hupe · Licht · Sirene | H · L · G | L3 · Steuerkreuz → · ← |
 | Karte · Pause · Chat | M · Esc · T | Ansicht · Menü · – |
+| Aimbot · ESP (nur Sandbox) | Y · U | über Einstellungen |
 
 Alle Menüs sind mit Tastatur, Maus und Controller bedienbar.
+
+**Sandbox-Modus:** Aimbot (Stärke 1–5, optional Auto-Feuer) und ESP (rote Umrisse durch Wände) sind nur im Einzelspieler und in privaten Sandbox-Lobbys (*Online › Private Sandbox-Lobby*) verfügbar; der Server setzt das Sandbox-Flag nur für private Lobbys. Konfiguration unter *Einstellungen › Sandbox*.
+
+**Fortsetzen:** Nach Reload, Tab-Schliessen oder Neustart tritt das Spiel automatisch der letzten Welt wieder bei (`?menu` öffnet stattdessen das Menü). Existiert die Lobby nach einem Server-Neustart nicht mehr im Speicher, wird sie unter demselben Code neu erstellt; sonst geht es mit dem gespeicherten Fortschritt (Position, Geld, Munition, Outfits, Einstellungen, Freunde) in einer neuen Welt weiter.
 
 ## Deployment
 

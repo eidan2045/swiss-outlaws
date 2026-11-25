@@ -26,6 +26,7 @@ export class Hud {
   private stars = el('div', 'stars');
   private lvl = el('div', 'lvl caps shadow');
   private netInfo = el('div', 'net shadow');
+  private assistChip = el('div', 'assist-chip shadow');
   private ammo = el('div', 'ammo shadow');
   private br = el('div', 'hud-br shadow');
   private speed = el('div', 'speed');
@@ -73,7 +74,7 @@ export class Hud {
     bl.append(this.map, bars, where);
     const tr = el('div', 'hud-tr');
     for (let i = 0; i < 5; i++) this.stars.append(el('i'));
-    tr.append(this.money, this.stars, this.lvl, this.ammo, this.netInfo);
+    tr.append(this.money, this.stars, this.lvl, this.ammo, this.assistChip, this.netInfo);
     const unit = el('div', 'speed-unit');
     unit.append(this.limit, this.gear, el('div', 'caps', 'km/h'));
     const sp = el('div');
@@ -158,6 +159,7 @@ export class Hud {
     this.set('ammo', s.inVehicle ? '' : s.weapon ? `PISTOLE  ${s.ammo}` : 'FAUST', (v) => { this.ammo.textContent = String(v); });
     if (this.showFps || s.online) this.set('net', `${Math.round(s.fps)} FPS${s.online ? ` · ${Math.round(s.ping)} ms` : ''}`, (v) => { this.netInfo.textContent = String(v); });
     else this.set('net', '', () => { this.netInfo.textContent = ''; });
+    this.set('assist', s.assist, (v) => { this.assistChip.textContent = String(v); this.assistChip.style.display = v ? 'block' : 'none'; });
     // vehicle cluster
     this.set('veh', s.inVehicle ? 1 : 0, (v) => { this.br.style.display = v ? 'flex' : 'none'; });
     if (s.inVehicle) {

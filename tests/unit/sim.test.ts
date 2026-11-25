@@ -122,3 +122,17 @@ describe('vehicle', () => {
     expect(rows[2].t100).toBeLessThan(rows[4].t100 * 0.6);
   });
 });
+
+import { APPEARANCE_RANGES, defaultAppearance, packAppearance, sanitizeAppearance, unpackAppearance } from '../../src/shared/net/protocol';
+describe('appearance', () => {
+  it('packs every field losslessly and clamps garbage', () => {
+    for (let i = 0; i < 500; i++) {
+      const a = defaultAppearance(i * 7919 + 3);
+      expect(unpackAppearance(packAppearance(a))).toEqual(a);
+    }
+    const max = {} as Record<string, number>;
+    for (const [k, n] of APPEARANCE_RANGES) max[k] = n - 1;
+    expect(packAppearance(max as never)).toBeLessThan(2 ** 31);
+    expect(sanitizeAppearance({ skin: 99, top: -4, acc: 'x', hat: 2 })).toMatchObject({ skin: 4, top: 0, acc: 0, hat: 2, legs: 0 });
+  });
+});
