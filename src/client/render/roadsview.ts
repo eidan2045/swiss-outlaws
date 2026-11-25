@@ -26,6 +26,7 @@ export class RoadsView {
   private cobble: MeshBuilder[] = [];
   private marks: MeshBuilder[] = [];
   private struct: MeshBuilder[] = [];
+  private lights: MeshBuilder[] = [];
   private ep: EdgePos = { x: 0, y: 0, z: 0, tx: 0, tz: 0, flag: 0 };
 
   constructor(private world: World, quality: Quality) {
@@ -37,6 +38,7 @@ export class RoadsView {
       this.cobble.push(new MeshBuilder({ floatColor: true }));
       this.marks.push(new MeshBuilder());
       this.struct.push(new MeshBuilder({ floatColor: true }));
+      this.lights.push(new MeshBuilder({ floatColor: true }));
     }
     // --- trims
     for (const n of g.nodes) {
@@ -97,7 +99,8 @@ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.83, 0.88), uSnow * 0.55);`)
     add(this.cobble, mCobble, false, 1);
     add(this.marks, mMarks, false, 0.35);
     add(this.struct, mStruct, true, 1.2);
-    this.asphalt = this.cobble = this.marks = this.struct = [];
+    add(this.lights, new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, toneMapped: false }), false, 0.6);
+    this.asphalt = this.cobble = this.marks = this.struct = this.lights = [];
   }
 
   /** Hide distant road meshes (terrain vertex colours take over, avoids far z-fighting). */
@@ -160,7 +163,12 @@ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.83, 0.88), uSnow * 0.55);`)
         bld.quad(p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], p3[0], p3[1], p3[2], o0 * 0.25, a.s * 0.25, o1 * 0.25, b.s * 0.25);
       };
       const bridge = a.flag === 1 || b.flag === 1;
+      const tunnel = a.flag === 2 || b.flag === 2;
       strip(-hw, 0, hw, 0, roadCol);
+      if (tunnel) {
+        this.tunnelSegment(e, a, b, st[i - 1]?.flag !== 2 && a.flag !== 2 ? 1 : 0, i);
+        continue;
+      }
       if (sw > 0) {
         strip(-hw - sw, KERB, -hw, KERB, walkCol);
         strip(-hw, KERB, -hw, 0, kerbCol);
@@ -200,6 +208,45 @@ diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.8, 0.83, 0.88), uSnow * 0.55);`)
       }
     }
     this.markings(e, s0, s1, urban);
+  }
+
+  /** Tunnel lining (walls, ceiling, lamp strip) plus the portal frame at both mouths. */
+  private tunnelSegment(e: RoadEdge, a: Station, b: Station, _first: number, i: number): void {
+    const ci = this.chunk((a.x + b.x) / 2, (a.z + b.z) / 2);
+    const S = this.struct[ci];
+    const half = e.width / 2 + 0.9, H = 5.9;
+    const P = (q: Station, off: number, dy: number): [number, number, number] => [q.x + q.rx * off, q.y + dy, q.z + q.rz * off];
+    const quad = (p0: number[], p1: number[], p2: number[], p3: number[], col: [number, number, number]) => {
+      S.color(col[0], col[1], col[2]);
+      S.quad(p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], p3[0], p3[1], p3[2], 0, 0, 1.5, 1.5);
+    };
+    const wall: [number, number, number] = [0.9, 0.9, 0.88], dark: [number, number, number] = [0.55, 0.55, 0.56];
+    // inward facing: left wall (offset -half) faces +offset, right wall faces -offset, ceiling faces down
+    quad(P(a, -half, -0.1), P(b, -half, -0.1), P(b, -half, H), P(a, -half, H), wall);
+    quad(P(b, half, -0.1), P(a, half, -0.1), P(a, half, H), P(b, half, H), wall);
+    quad(P(a, -half, H), P(b, -half, H), P(b, half, H), P(a, half, H), dark);
+    // kerb strips at the foot of the walls
+    quad(P(a, -half + 0.9, 0.02), P(a, -half, 0.25), P(b, -half, 0.25), P(b, -half + 0.9, 0.02), dark);
+    quad(P(a, half, 0.25), P(a, half - 0.9, 0.02), P(b, half - 0.9, 0.02), P(b, half, 0.25), dark);
+    // lamp strip
+    if (i % 2 === 0) {
+      const L = this.lights[ci];
+      for (const off of [-half * 0.45, half * 0.45]) {
+        const p0 = P(a, off - 0.35, H - 0.06), p1 = P(a, off + 0.35, H - 0.06), q0 = P(a, off - 0.35, H - 0.06), q1 = P(a, off + 0.35, H - 0.06);
+        const tx = (b.x - a.x) * 0.35, tz = (b.z - a.z) * 0.35, ty = (b.y - a.y) * 0.35;
+        q0[0] += tx; q0[1] += ty; q0[2] += tz; q1[0] += tx; q1[1] += ty; q1[2] += tz;
+        L.color(3.2, 2.7, 1.8);
+        L.quad(p0[0], p0[1], p0[2], q0[0], q0[1], q0[2], q1[0], q1[1], q1[2], p1[0], p1[1], p1[2]);
+      }
+    }
+    // portal frame where the tunnel meets the open road
+    for (const [q, open] of [[a, a.flag !== 2], [b, b.flag !== 2]] as [Station, boolean][]) {
+      if (!open) continue;
+      const tx = q.rz, tz = -q.rx;
+      S.color(1.25, 1.24, 1.2);
+      for (const side of [-1, 1]) S.box(q.x + q.rx * side * (half + 0.9), q.y + 3.6, q.z + q.rz * side * (half + 0.9), 0.9, 3.9, 1.1, tx, tz, 0.2);
+      S.box(q.x, q.y + H + 1.2, q.z, 1.1, 1.25, half + 1.8, q.rx, q.rz, 0.2);
+    }
   }
 
   private bridgeSegment(e: RoadEdge, a: Station, b: Station, i: number): void {

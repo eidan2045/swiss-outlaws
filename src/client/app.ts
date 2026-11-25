@@ -193,10 +193,10 @@ export class App implements GameUi {
     if (!this.noRender) this.engine.render(dt);
     // automatic quality: step down when the frame rate stays low
     this.fpsWin.t += dt; this.fpsWin.n++;
-    if (this.fpsWin.t >= 4) {
+    if (this.fpsWin.t >= 2.5) {
       const fps = this.fpsWin.n / this.fpsWin.t;
       this.fpsWin.t = 0; this.fpsWin.n = 0;
-      if (this.settings.quality === 'auto' && fps < 34 && !document.hidden) {
+      if (this.settings.quality === 'auto' && fps < 38 && !document.hidden && !this.noRender) {
         const order: QualityName[] = ['low', 'medium', 'high', 'ultra'];
         const i = order.indexOf(this.engine.quality.name);
         if (i > 0) { this.setQuality(order[i - 1]); this.autoQ = order[i - 1]; this.hud.toast(`Grafikprofil automatisch angepasst: ${order[i - 1]}`, 'info'); }

@@ -59,12 +59,28 @@ export class Terrain {
       t.map.anisotropy = quality.anisotropy;
       t.normal.anisotropy = quality.anisotropy;
     }
+    // tunnels: up to four straight segments whose volume is cut out of the terrain surface
+    const tunA: THREE.Vector4[] = [], tunB: THREE.Vector4[] = [];
+    for (const e of world.roads.edges) {
+      let i0 = -1, i1 = -1;
+      for (let i = 0; i < e.n; i++) if (e.flag[i] === 2) { if (i0 < 0) i0 = i; i1 = i; }
+      if (i0 < 0 || i1 - i0 < 2) continue;
+      const parts = Math.min(4 - tunA.length, i1 - i0 > 12 ? 4 : 2);
+      for (let k = 0; k < parts; k++) {
+        const a = Math.round(i0 + ((i1 - i0) * k) / parts), b = Math.round(i0 + ((i1 - i0) * (k + 1)) / parts);
+        tunA.push(new THREE.Vector4(e.px[a], e.pz[a], e.px[b], e.pz[b]));
+        tunB.push(new THREE.Vector4(e.py[a], e.py[b], e.width / 2 + 1.5, 0));
+      }
+    }
+    const tunN = tunA.length;
+    while (tunA.length < 4) { tunA.push(new THREE.Vector4()); tunB.push(new THREE.Vector4()); }
     this.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 });
     patchMaterial(this.material, 'terrain', (sh) => {
       Object.assign(sh.uniforms, {
         tGrass: { value: det.grass.map }, tRock: { value: det.rock.map }, tPaved: { value: det.paved.map }, tDirt: { value: det.dirt.map },
         nGrass: { value: det.grass.normal }, nRock: { value: det.rock.normal }, nPaved: { value: det.paved.normal }, nDirt: { value: det.dirt.normal },
         tMacro: { value: det.macro }, uWet: U.uWet, uSnow: U.uSnow, uCamPos: U.uCamPos,
+        uTunA: { value: tunA }, uTunB: { value: tunB }, uTunN: { value: tunN },
       });
       sh.vertexShader = replaceOnce(sh.vertexShader, '#include <common>', `#include <common>
 attribute vec4 aSplat;
@@ -79,12 +95,22 @@ vWNormal = normalize(mat3(modelMatrix) * normal);`);
 uniform sampler2D tGrass, tRock, tPaved, tDirt, nGrass, nRock, nPaved, nDirt, tMacro;
 uniform float uWet, uSnow;
 uniform vec3 uCamPos;
+uniform vec4 uTunA[4]; uniform vec4 uTunB[4]; uniform int uTunN;
 varying vec4 vSplat;
 varying vec3 vWPos;
 varying vec3 vWNormal;
 vec3 gDetN;
 float gPuddle;`);
       sh.fragmentShader = replaceOnce(sh.fragmentShader, '#include <color_fragment>', `#include <color_fragment>
+for (int i = 0; i < 4; i++) {
+  if (i >= uTunN) break;
+  vec2 ta = uTunA[i].xy, tab = uTunA[i].zw - uTunA[i].xy;
+  float tt = dot(vWPos.xz - ta, tab) / dot(tab, tab);
+  if (tt > -0.02 && tt < 1.02) {
+    float tc = clamp(tt, 0.0, 1.0);
+    if (distance(vWPos.xz, ta + tab * tc) < uTunB[i].z && vWPos.y < mix(uTunB[i].x, uTunB[i].y, tc) + 6.4) discard;
+  }
+}
 {
   float dist = distance(vWPos, uCamPos);
   float near = 1.0 - smoothstep(60.0, 260.0, dist);

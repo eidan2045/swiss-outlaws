@@ -187,14 +187,14 @@ export function makeAsphalt(size = 512): DetailTex {
   const h = new Float32Array(size * size);
   for (let i = 0; i < h.length; i++) {
     const crack = Math.min(1, cr.edge[i] * 26);
-    h[i] = a[i] * 0.35 + b[i] * 0.5 + (crack < 0.6 && b[i] > 0.52 ? -0.25 : 0) + 0.15;
+    h[i] = a[i] * 0.35 + b[i] * 0.5 + (crack < 0.35 && b[i] > 0.6 ? -0.2 : 0) + 0.15;
   }
   return {
     map: dataTexture(colorize(size, (i, _x, _y, c) => {
       const crack = Math.min(1, cr.edge[i] * 26);
       let v = 0.105 + a[i] * 0.05 + b[i] * 0.075;
-      if (crack < 0.6 && b[i] > 0.52) v *= 0.55;
-      if (cr.id[i] > 0.82) v *= 0.82; // repair patches
+      if (crack < 0.35 && b[i] > 0.6) v *= 0.72;
+      if (cr.id[i] > 0.86) v *= 0.9; // repair patches
       c[0] = v; c[1] = v * 1.01; c[2] = v * 1.04;
     }), size, { srgb: true }),
     normal: dataTexture(normalFromHeight(h, size, 2.4), size),

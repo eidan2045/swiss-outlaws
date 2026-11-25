@@ -348,7 +348,7 @@ diffuseColor.a = 1.0;`);
   float rnd = vColor.a;
   float on = step(rnd, uLit) * uNight;
   vec3 warm = mix(vec3(1.0, 0.72, 0.42), vec3(0.9, 0.93, 1.0), step(0.72, fract(rnd * 7.31)));
-  totalEmissiveRadiance += gProps.r * on * warm * (1.1 + 1.6 * fract(rnd * 13.7));
+  totalEmissiveRadiance += gProps.r * on * warm * (0.45 + 0.75 * fract(rnd * 13.7));
 }`);
   });
   const inset = 1.5 / size;

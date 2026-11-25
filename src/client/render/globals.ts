@@ -40,7 +40,7 @@ export interface Quality {
 export const QUALITIES: Record<QualityName, Quality> = {
   low: { name: 'low', pixelRatio: 0.7, shadows: false, shadowSize: 1024, shadowRadius: 70, post: false, bloom: false, ao: false, msaa: 0, viewDist: 1100, terrainLod: 0.6, treeNear: 60, treeFar: 420, grass: 0, detailDist: 120, maxLights: 2, anisotropy: 2, reflections: false },
   medium: { name: 'medium', pixelRatio: 1, shadows: true, shadowSize: 2048, shadowRadius: 110, post: true, bloom: true, ao: false, msaa: 0, viewDist: 1900, terrainLod: 0.85, treeNear: 100, treeFar: 800, grass: 0.5, detailDist: 220, maxLights: 4, anisotropy: 4, reflections: false },
-  high: { name: 'high', pixelRatio: 1.25, shadows: true, shadowSize: 4096, shadowRadius: 170, post: true, bloom: true, ao: true, msaa: 4, viewDist: 3000, terrainLod: 1, treeNear: 150, treeFar: 1300, grass: 1, detailDist: 320, maxLights: 6, anisotropy: 8, reflections: false },
+  high: { name: 'high', pixelRatio: 1.25, shadows: true, shadowSize: 4096, shadowRadius: 170, post: true, bloom: true, ao: false, msaa: 4, viewDist: 3000, terrainLod: 1, treeNear: 150, treeFar: 1300, grass: 1, detailDist: 320, maxLights: 6, anisotropy: 8, reflections: false },
   ultra: { name: 'ultra', pixelRatio: 2, shadows: true, shadowSize: 4096, shadowRadius: 230, post: true, bloom: true, ao: true, msaa: 4, viewDist: 4600, terrainLod: 1.4, treeNear: 220, treeFar: 2000, grass: 1.6, detailDist: 480, maxLights: 8, anisotropy: 16, reflections: true },
 };
 

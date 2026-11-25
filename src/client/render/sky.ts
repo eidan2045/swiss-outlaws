@@ -235,8 +235,8 @@ export class SkySystem {
     this.sun.intensity += weather.flash * 7;
     this.hemi.color.copy(this.zen).lerp(this.hor, 0.5);
     this.hemi.groundColor.setRGB(0.22, 0.2, 0.16).multiply(this.hor).multiplyScalar(2.2);
-    this.hemi.intensity = 0.42 * amb + weather.flash * 2;
-    this.scene.environmentIntensity = 0.62;
+    this.hemi.intensity = 0.72 * amb + weather.flash * 2;
+    this.scene.environmentIntensity = 0.82;
 
     // --- fog
     const fog = this.scene.fog as THREE.FogExp2;
