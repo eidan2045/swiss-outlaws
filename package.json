@@ -1,0 +1,41 @@
+{
+  "name": "swiss-outlaws",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Swiss Outlaws – Open-World-Multiplayer-Actionspiel in einer komprimierten Schweiz (Browser, Three.js)",
+  "scripts": {
+    "dev": "vite",
+    "dev:server": "tsx watch src/server/index.ts",
+    "build": "vite build",
+    "build:single": "vite build --config vite.single.config.ts && node scripts/finish-single.mjs",
+    "build:server": "esbuild src/server/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist-server/server.mjs --external:ws --banner:js=\"import{createRequire as __cr}from'module';const require=__cr(import.meta.url);\"",
+    "build:all": "npm run build && npm run build:single && npm run build:server",
+    "start": "node dist-server/server.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "node tests/e2e/run-all.mjs",
+    "map": "tsx scripts/render-map.ts"
+  },
+  "dependencies": {
+    "three": "^0.187.0",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pngjs": "^6.0.5",
+    "@types/three": "^0.187.0",
+    "@types/ws": "^8.5.0",
+    "esbuild": "^0.28.2",
+    "pngjs": "^7.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.8",
+    "vite-plugin-singlefile": "^2.3.4",
+    "vitest": "^5.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

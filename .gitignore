@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-server
+dist-single
+.vercel
+*.log
+data/
+test-results/
+.DS_Store
