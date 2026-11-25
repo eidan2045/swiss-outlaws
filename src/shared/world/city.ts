@@ -188,6 +188,24 @@ export function buildCity(w: World): CityData {
   ];
   for (const l of LM) addBuilding({ kind: l.kind, x: l.x, z: l.z, rot: l.rot, w: l.w, d: l.d, h: l.h, floors: l.floors, seed: (l.x * 31 + l.z * 17) | 0, zone: w.zoneAt(l.x, l.z), variant: l.variant, name: l.name });
 
+  // ------------------------------------------------------------ reserved clearings (plazas, car parks, activity markers)
+  const RESERVED: [number, number, number][] = [
+    [-150, 346, 24], // Bürkliplatz (spawn + car park)
+    [-150, 318, 9], // delivery job marker
+    [-228, 366, 8], // race start
+    [-196, -300, 16], [-128, -332, 14], // Bahnhofplatz + station car park
+    [-770, -486, 22], [-980, -498, 14], // dealer forecourt, workshop
+    [VILLAGE_CENTER.x - 22, VILLAGE_CENTER.z + 6, 26], // village square + car park
+    [PASS_SADDLE.x - 22, PASS_SADDLE.z + 14, 14],
+    [UETLIBERG_TOP.x + 14, UETLIBERG_TOP.z + 30, 12],
+    [262, -192, 12], // hospital entrance
+    [-152, -62, 9], // watch atelier pickup
+  ];
+  const reserved = (x: number, z: number, pad: number): boolean => {
+    for (const r of RESERVED) if (dist2(x, z, r[0], r[1]) < r[2] + pad) return true;
+    return false;
+  };
+
   // ------------------------------------------------------------ lots along roads
   const order = ['main', 'street', 'alley', 'rural'];
   const edgesSorted = g.edges.filter((e) => !e.noBuildings && e.type !== 'highway').sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type) || a.id - b.id);
@@ -241,6 +259,7 @@ export function buildCity(w: World): CityData {
         // mid points of the far side + centre against other roads
         if (ok && (!roadClear(cx, cz, 0.3) || !roadClear((ca[0] + ca[2]) / 2, (ca[1] + ca[3]) / 2, 0.3) || !roadClear((ca[4] + ca[6]) / 2, (ca[5] + ca[7]) / 2, 0.3, e))) ok = false;
         if (ok && (lakeSd(cx, cz) < depth / 2 + 4 || riverDist(cx, cz) < 24 + depth / 2 + 3)) ok = false;
+        if (ok && reserved(cx, cz, Math.max(front, depth) * 0.5)) ok = false;
         if (ok && !footprintFree(cx, cz, front / 2, depth / 2, rot, st.gap[1] > 0 ? 1.2 : -0.12)) ok = false;
         if (!ok) {
           s += 4;
@@ -353,7 +372,7 @@ export function buildCity(w: World): CityData {
 
   // ------------------------------------------------------------ trees: parks, gardens, forests
   const treeOk = (x: number, z: number, pad: number): boolean => {
-    if (w.terrainAt(x, z) < 1.2) return false;
+    if (w.terrainAt(x, z) < 1.2 || reserved(x, z, 1)) return false;
     const n = w.roadIndex.nearest(x, z, 20, near);
     if (n && n.dist < n.edge.width / 2 + n.edge.sidewalk + pad) return false;
     w.colliders.query(x, z, 2.5, tmpC);

@@ -190,13 +190,18 @@ export function buildWorld(onProgress?: (label: string, f: number) => void): Wor
             const h = H[k];
             if (h > yr + lim) H[k] = yr + lim;
             else if (h < yr - lim && base[k] > 0.6) H[k] = yr - lim;
+          } else if (pass === 2) {
+            // carriageways always win over neighbouring sidewalks (junctions)
+            if (d <= e.width / 2 + 0.4) H[k] = yr;
           } else {
             if (d > (isBridge ? halfRoad + 0.6 : core)) continue;
+            // sidewalks (and the strip up to the building line) sit one kerb height above the carriageway
+            const kerb = e.sidewalk > 0 && d > e.width / 2 + 0.4 ? 0.15 : 0;
             if (isBridge) {
-              H[k] = yr;
+              H[k] = yr + kerb;
               w.roadMask[k] = 2;
             } else {
-              H[k] = yr;
+              H[k] = yr + kerb;
               if (d <= halfRoad + 0.2) w.roadMask[k] = 1;
             }
             if (d <= e.width / 2 + 0.6) w.surface[k] = surf;
@@ -210,6 +215,7 @@ export function buildWorld(onProgress?: (label: string, f: number) => void): Wor
   w.surface.fill(255);
   for (const e of w.roads.edges) carve(e, 0);
   for (const e of w.roads.edges) carve(e, 1);
+  for (const e of w.roads.edges) carve(e, 2);
 
   // 4. tunnels: segments + make sure there is rock above them
   for (const e of w.roads.edges) {
@@ -266,7 +272,7 @@ export function buildWorld(onProgress?: (label: string, f: number) => void): Wor
       const k = iz * N + ix;
       const h = H[k];
       const m = w.roadMask[k];
-      HV[k] = m === 2 ? base[k] : m === 1 ? h - 0.38 : h;
+      HV[k] = m === 2 ? base[k] : m === 1 ? h - 0.45 : h;
       if (w.surface[k] !== 255) continue;
       const x = ix * RES - WORLD_HALF;
       const zn = w.zone[zi * ZN + Math.min(ZN - 1, (ix * RES / ZRES) | 0)] as Zone;
