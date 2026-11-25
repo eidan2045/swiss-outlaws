@@ -96,7 +96,7 @@ float gPuddle;`);
   vec2 uvRock = an.y > 0.72 ? uv : (an.x > an.z ? vWPos.zy : vWPos.xy);
   vec3 dG = texture2D(tGrass, uv * 0.31).rgb;
   vec3 dR = texture2D(tRock, uvRock * 0.11).rgb;
-  vec3 dP = texture2D(tPaved, uv * 0.42).rgb;
+  vec3 dP = texture2D(tPaved, uv * 0.62).rgb;
   vec3 dD = texture2D(tDirt, uv * 0.27).rgb;
   vec3 det = dG * sw.x + dR * sw.y + dP * sw.z + dD * sw.w;
   // second, larger octave breaks up tiling in the mid distance
@@ -105,7 +105,7 @@ float gPuddle;`);
   d *= mix(vec3(1.0), det2 * 2.0, mid * 0.6);
   float macro = texture2D(tMacro, uv * 0.0021).r * 0.6 + texture2D(tMacro, uv * 0.011 + 0.3).r * 0.4;
   diffuseColor.rgb *= d * (0.78 + 0.44 * macro);
-  vec3 nG = texture2D(nGrass, uv * 0.31).xyz, nR = texture2D(nRock, uvRock * 0.11).xyz, nP = texture2D(nPaved, uv * 0.42).xyz, nD = texture2D(nDirt, uv * 0.27).xyz;
+  vec3 nG = texture2D(nGrass, uv * 0.31).xyz, nR = texture2D(nRock, uvRock * 0.11).xyz, nP = texture2D(nPaved, uv * 0.62).xyz, nD = texture2D(nDirt, uv * 0.27).xyz;
   vec3 nm = nG * sw.x + nR * sw.y + nP * sw.z + nD * sw.w;
   gDetN = (nm * 2.0 - 1.0) * near;
   // snow settles on flat ground, rain darkens and forms puddles on hard surfaces
