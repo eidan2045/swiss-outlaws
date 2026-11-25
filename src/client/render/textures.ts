@@ -216,7 +216,7 @@ export function makeRoofTiles(size = 256): DetailTex {
     const across = Math.sin(fu * Math.PI);
     const step = 1 - fv;
     h[i] = across * 0.45 + step * 0.55;
-    const shade = 0.36 + 0.2 * across * (0.55 + 0.45 * step) + Math.abs(id) * 0.1 + n[i] * 0.1 - (fv > 0.93 ? 0.16 : 0);
+    const shade = 0.68 + 0.26 * across * (0.55 + 0.45 * step) + Math.abs(id) * 0.14 + n[i] * 0.12 - (fv > 0.93 ? 0.26 : 0);
     c[0] = shade; c[1] = shade; c[2] = shade;
   });
   return { map: dataTexture(alb, size, { srgb: true }), normal: dataTexture(normalFromHeight(h, size, 3.0), size) };
@@ -228,7 +228,7 @@ export function makeFlatRoof(size = 256): DetailTex {
   const h = new Float32Array(size * size);
   for (let i = 0; i < h.length; i++) h[i] = a[i] * 0.6 + b[i] * 0.4;
   return {
-    map: dataTexture(colorize(size, (i, _x, _y, c) => { const v = 0.38 + a[i] * 0.16 + b[i] * 0.12; c[0] = c[1] = c[2] = v; }), size, { srgb: true }),
+    map: dataTexture(colorize(size, (i, _x, _y, c) => { const v = 0.7 + a[i] * 0.2 + b[i] * 0.16; c[0] = c[1] = c[2] = v; }), size, { srgb: true }),
     normal: dataTexture(normalFromHeight(h, size, 2.0), size),
   };
 }

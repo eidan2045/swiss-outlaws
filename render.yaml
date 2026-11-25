@@ -1,0 +1,18 @@
+# Render Blueprint: one web service that runs the authoritative game server and also serves the built client.
+# Deploy: Render dashboard → New → Blueprint → select this repository.
+services:
+  - type: web
+    name: swiss-outlaws
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build && npm run build:server
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: MAX_PLAYERS
+        value: 8
+      # Attach a persistent disk (paid plans) and set DATA_DIR to its mount path to keep accounts across deploys.
+      - key: DATA_DIR
+        value: ./data

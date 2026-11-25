@@ -81,6 +81,15 @@ export class Input {
     window.addEventListener('gamepaddisconnected', () => { this.padConnected = (navigator.getGamepads?.() ?? []).some((g) => g); });
   }
 
+  /** Drop pending key presses (called when menus open/close so one key press never triggers two things). */
+  flush(): void {
+    this.pressed.clear();
+    this.mousePressedL = false;
+    this.mdx = this.mdy = 0;
+    const pad = (navigator.getGamepads?.() ?? []).find((g) => g);
+    if (pad) this.prevPad = pad.buttons.map((x) => x.pressed);
+  }
+
   requestLock(): void {
     if (!this.locked && this.canvas.requestPointerLock) {
       try { (this.canvas.requestPointerLock() as unknown as Promise<void> | undefined)?.catch?.(() => {}); } catch { /* not allowed without gesture */ }
